@@ -1,0 +1,81 @@
+name: Package Publishing
+
+on:
+  push:
+    tags:
+      - 'node-v*.*.*'
+      - 'python-v*.*.*'
+      - 'dotnet-v*.*.*'
+
+jobs:
+  determine-sdk:
+    runs-on: ubuntu-latest
+    outputs:
+      sdk_type: ${{ steps.extract.outputs.sdk_type }}
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - id: extract
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          SDK_TYPE=${TAG%-v*}
+          VERSION=${TAG#*-v}
+          echo "sdk_type=$SDK_TYPE" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  publish-package:
+    needs: determine-sdk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      # Node.js publishing
+      - name: Setup Node.js
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'node' }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+      - name: Publish Node package
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'node' }}
+        run: |
+          cd sdk/node
+          npm ci
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
+      
+      # Python publishing
+      - name: Setup Python
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'python' }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Publish Python package
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'python' }}
+        run: |
+          cd sdk/python
+          # Update version in setup.py or pyproject.toml
+          sed -i "s/version=\".*\"/version=\"${{ needs.determine-sdk.outputs.version }}\"/g" setup.py
+          pip install build twine
+          python -m build
+          python -m twine upload dist/*
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      
+      # .NET publishing
+      - name: Setup .NET
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'dotnet' }}
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '6.0.x'
+      - name: Publish .NET package
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'dotnet' }}
+        run: |
+          cd sdk/dotnet
+          # Update version in .csproj
+          sed -i "s/<Version>.*<\/Version>/<Version>${{ needs.determine-sdk.outputs.version }}<\/Version>/g" **/*.csproj
+          dotnet restore
+          dotnet build -c Release
+          dotnet pack -c Release
+          dotnet nuget push **/bin/Release/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json 
