@@ -1,0 +1,79 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - 'sdk/**'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      node: ${{ steps.filter.outputs.node }}
+      python: ${{ steps.filter.outputs.python }}
+      dotnet: ${{ steps.filter.outputs.dotnet }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            node:
+              - 'sdk/node/**'
+            python:
+              - 'sdk/python/**'
+            dotnet:
+              - 'sdk/dotnet/**'
+
+  build-node:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.node == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      HPKV_API_BASE_URL: ${{ secrets.HPKV_API_BASE_URL }}
+      HPKV_API_KEY: ${{ secrets.HPKV_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - run: |
+          cd sdk/node
+          npm ci
+          npm run lint
+          npm run build
+          npm test
+
+  build-python:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.python == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - run: |
+          cd sdk/python
+          pip install -e ".[dev]"
+          pytest
+
+  build-dotnet:
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.dotnet == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: '6.0.x'
+      - run: |
+          cd sdk/dotnet
+          dotnet restore
+          dotnet build
+          dotnet test 

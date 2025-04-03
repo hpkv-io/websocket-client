@@ -1,0 +1,69 @@
+name: Release Validation
+
+on:
+  push:
+    branches:
+      - 'release/node-v*'
+      - 'release/python-v*'
+      - 'release/dotnet-v*'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  determine-sdk:
+    runs-on: ubuntu-latest
+    outputs:
+      sdk_type: ${{ steps.extract.outputs.sdk_type }}
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - id: extract
+        run: |
+          BRANCH=${GITHUB_REF#refs/heads/release/}
+          SDK_TYPE=${BRANCH%-v*}
+          VERSION=${BRANCH#*-v}
+          echo "sdk_type=$SDK_TYPE" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  validate-sdk:
+    needs: determine-sdk
+    runs-on: ubuntu-latest
+    env:
+      HPKV_API_BASE_URL: ${{ secrets.HPKV_API_BASE_URL }}
+      HPKV_API_KEY: ${{ secrets.HPKV_API_KEY }}
+    steps:
+      - uses: actions/checkout@v3
+      
+      # Node.js validation
+      - name: Validate Node.js SDK
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'node' }}
+        run: |
+          cd sdk/node
+          npm ci
+          npm run lint
+          npm run build
+          npm test
+          npm pack
+          echo "Ready to release Node.js SDK version ${{ needs.determine-sdk.outputs.version }}"
+          
+      # Python validation
+      - name: Validate Python SDK
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'python' }}
+        run: |
+          cd sdk/python
+          pip install -e ".[dev]"
+          pytest
+          python -m build
+          echo "Ready to release Python SDK version ${{ needs.determine-sdk.outputs.version }}"
+          
+      # .NET validation
+      - name: Validate .NET SDK
+        if: ${{ needs.determine-sdk.outputs.sdk_type == 'dotnet' }}
+        run: |
+          cd sdk/dotnet
+          dotnet restore
+          dotnet build
+          dotnet test
+          dotnet pack -c Release
+          echo "Ready to release .NET SDK version ${{ needs.determine-sdk.outputs.version }}" 
