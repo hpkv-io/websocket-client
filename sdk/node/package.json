@@ -2,8 +2,8 @@
   "name": "@hpkv/websocket-client",
   "version": "0.1.0",
   "description": "HPKV WebSocket client for Node.js",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "scripts": {
     "build": "tsc",
     "test": "jest",
