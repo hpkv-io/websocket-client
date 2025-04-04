@@ -13,7 +13,8 @@ export class WebsocketTokenManager {
     }
 
     this.apiKey = apiKey;
-    this.baseUrl = baseUrl;
+    // Convert WebSocket URLs to HTTP URLs and remove /ws suffix for REST API calls
+    this.baseUrl = baseUrl.replace(/^wss?:\/\//, 'https://').replace(/\/ws$/, '');
   }
 
   async generateToken(config: HPKVTokenConfig): Promise<string> {
