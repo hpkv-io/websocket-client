@@ -14,7 +14,8 @@ export class HPKVApiClient extends BaseWebSocketClient {
   }
 
   protected buildConnectionUrl(): string {
-    return `${this.baseUrl}/ws?apiKey=${this.apiKey}`;
+    const baseUrl = this.baseUrl.endsWith('/ws') ? this.baseUrl : `${this.baseUrl}/ws`;
+    return `${baseUrl}?apiKey=${this.apiKey}`;
   }
 
   async get(key: string): Promise<HPKVResponse> {

@@ -11,7 +11,8 @@ export class HPKVSubscriptionClient extends BaseWebSocketClient {
   }
 
   protected buildConnectionUrl(): string {
-    return `${this.baseUrl}/ws?token=${this.token}`;
+    const baseUrl = this.baseUrl.endsWith('/ws') ? this.baseUrl : `${this.baseUrl}/ws`;
+    return `${baseUrl}?token=${this.token}`;
   }
 
   // Subscription Operations
