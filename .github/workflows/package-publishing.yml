@@ -40,14 +40,9 @@ jobs:
         run: |
           cd sdk/node
           npm ci
-          # Check if this is a stable version (without pre-release suffix)
-          if [[ ${{ needs.determine-sdk.outputs.version }} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            # Publish with latest tag for stable versions
-            npm publish --access public --tag latest
-          else
-            # Publish without specifying tag for pre-releases
-            npm publish --access public
-          fi
+          npm run build
+          npm publish --access public
+
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
           HPKV_API_BASE_URL: ${{ secrets.HPKV_API_BASE_URL }}
