@@ -42,7 +42,6 @@ jobs:
           npm ci
           npm run build
           npm publish --access public
-
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_ACCESS_TOKEN }}
           HPKV_API_BASE_URL: ${{ secrets.HPKV_API_BASE_URL }}
