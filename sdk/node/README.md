@@ -75,12 +75,12 @@ const userData = {
 await apiClient.set('user:123', userData);
 
 // Update only specific fields
-await apiClient.patch('user:123', {
+await apiClient.set('user:123', {
   preferences: {
     theme: 'light',
     notifications: false
   }
-});
+}, true);
 
 // Range Queries
 // Get users with IDs between 100 and 200
@@ -207,7 +207,7 @@ app.post('/api/token/websocket', async (req, res) => {
 ```
 Below diagram illustrates the process for token generation and usage at the client-side:
 
-![Sequence diagram - token generation for HPKV subscription client](../../assets/images/diagram.png)
+![Sequence diagram - token generation for HPKV subscription client](assets/images/diagram.png)
 
 
 #### Notes
@@ -233,6 +233,32 @@ class HPKVClientFactory {
   static createSubscriptionClient(token: string, baseUrl: string): HPKVSubscriptionClient;
 }
 ```
+### Request and Response Types
+```typescript
+interface HPKVRequestMessage {
+  op: HPKVOperation;
+  key: string;
+  value?: string;
+  messageId?: number;
+  endKey?: string;
+  limit?: number;
+}
+
+interface HPKVResponse {
+  code: number;
+  messageId?: number;
+  key?: string;
+  value?: string;
+  error?: string;
+  success?: boolean;
+  records?: Array<{
+    key: string;
+    value: string;
+  }>;
+  count?: number;
+  truncated?: boolean;
+}
+```
 
 ### HPKVApiClient
 
@@ -247,11 +273,10 @@ class HPKVApiClient {
   
   // CRUD Operations
   get(key: string): Promise<HPKVResponse>;
-  set(key: string, value: any): Promise<HPKVResponse>;
+  set(key: string, value: any, partialUpdate=false): Promise<HPKVResponse>;
   delete(key: string): Promise<HPKVResponse>;
   
   // Advanced Operations
-  patch(key: string, value: any): Promise<HPKVResponse>;  // JSON patch operation
   range(key: string, endKey: string, options: { limit?: number }): Promise<HPKVResponse>;
   atomicIncrement(key: string, value: number): Promise<HPKVResponse>;
 }
@@ -268,12 +293,18 @@ class HPKVSubscriptionClient {
   disconnect(): void;
   getConnectionStatus(): boolean;
   
+  // CRUD Operations
+  get(key: string): Promise<HPKVResponse>;
+  set(key: string, value: any, partialUpdate=false): Promise<HPKVResponse>;
+  delete(key: string): Promise<HPKVResponse>;
+  
+  // Advanced Operations
+  range(key: string, endKey: string, options: { limit?: number }): Promise<HPKVResponse>;
+  atomicIncrement(key: string, value: number): Promise<HPKVResponse>;
+  
   // Subscription Operations
   subscribe(key: string, callback: (data: any) => void): void;
   unsubscribe(key: string): void;
-  
-  // Inherits CRUD operations from BaseWebSocketClient
-  // Operations are restricted by the access pattern specified in token generation
 }
 ```
 
@@ -283,10 +314,12 @@ class HPKVSubscriptionClient {
 class WebsocketTokenManager {
   constructor(apiKey: string, baseUrl: string);
   
-  generateToken(config: {
-    subscribeKeys: string[];      // Keys to monitor for changes
-    accessPattern?: string;       // Regex pattern for allowed keys. The keys specified with this regex pattern are the ones that client will have access for CRUD operations
-  }): Promise<string>;
+  generateToken(config: HPKVTokenConfig): Promise<string>;
+}
+
+interface HPKVTokenConfig {
+  subscribeKeys: string[]; // Keys to monitor for changes
+  accessPattern?: string; // Regex pattern for allowed keys. The keys specified with this regex pattern are the ones that client will have access for CRUD operations
 }
 ```
 
