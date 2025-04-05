@@ -44,11 +44,12 @@ async function main(): Promise<void> {
 
     // Example of partial update (patch)
     console.log('\nUpdating user preferences...');
-    const patchResponse = await serverClient.patch('user:123', {
+    const patchResponse = await serverClient.set('user:123', {
       preferences: {
         theme: 'light',
         notifications: false,
       },
+      partialUpdate: true,
     });
     console.log('User preferences updated:', patchResponse.success);
 

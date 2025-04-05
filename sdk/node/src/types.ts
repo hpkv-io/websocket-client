@@ -7,18 +7,8 @@ export enum HPKVOperation {
   ATOMIC = 6,
 }
 
-export interface HPKVConfig {
-  // Either apiKey or token must be provided
-  apiKey?: string;
-  token?: string;
-  baseUrl?: string;
-  reconnectInterval?: number;
-  maxReconnectAttempts?: number;
-  connectionTimeout?: number;
-}
-
 export interface HPKVTokenConfig {
-  subscribeKeys?: string[];
+  subscribeKeys: string[];
   accessPattern?: string;
 }
 
@@ -46,21 +36,8 @@ export interface HPKVResponse {
   truncated?: boolean;
 }
 
-export interface HPKVSubscription {
-  key: string;
-  callback: (data: HPKVResponse) => void;
-}
-
 export type HPKVEventHandler = (data: HPKVResponse) => void;
 
-export interface HPKVClient {
-  connect(): Promise<void>;
-  disconnect(): void;
-  get(key: string): Promise<HPKVResponse>;
-  set(key: string, value: unknown): Promise<HPKVResponse>;
-  delete(key: string): Promise<HPKVResponse>;
-  subscribe(key: string, callback: HPKVEventHandler): void;
-  unsubscribe(key: string): void;
-  on(event: string, handler: HPKVEventHandler): void;
-  off(event: string, handler: HPKVEventHandler): void;
+export interface RangeQueryOptions {
+  limit?: number;
 }

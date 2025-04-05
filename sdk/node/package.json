@@ -1,6 +1,6 @@
 {
   "name": "@hpkv/websocket-client",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "HPKV WebSocket client for Node.js",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -19,7 +19,8 @@
   "files": [
     "dist/src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "assets"
   ],
   "keywords": [
     "hpkv",

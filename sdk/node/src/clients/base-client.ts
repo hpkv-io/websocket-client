@@ -1,6 +1,10 @@
 import WebSocket from 'ws';
-import { HPKVResponse, HPKVRequestMessage, HPKVOperation } from '../types';
+import { HPKVResponse, HPKVRequestMessage, HPKVOperation, RangeQueryOptions } from '../types';
 
+/**
+ * Base WebSocket client that handles connection management and message passing
+ * for the HPKV WebSocket API.
+ */
 export abstract class BaseWebSocketClient {
   protected ws: WebSocket | null = null;
   protected isConnected = false;
@@ -14,13 +18,26 @@ export abstract class BaseWebSocketClient {
   protected isDisconnecting = false;
   protected baseUrl: string;
 
+  /**
+   * Creates a new BaseWebSocketClient instance
+   * @param baseUrl - The base URL of the HPKV API
+   */
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
   }
 
+  /**
+   * Builds the WebSocket connection URL with authentication
+   * @returns The WebSocket connection URL
+   */
   protected abstract buildConnectionUrl(): string;
 
-  // CRUD Operations
+  /**
+   * Retrieves a value from the key-value store
+   * @param key - The key to retrieve
+   * @returns A promise that resolves with the API response
+   * @throws Error if the key is not found or connection fails
+   */
   async get(key: string): Promise<HPKVResponse> {
     return this.sendMessage({
       op: HPKVOperation.GET,
@@ -28,7 +45,23 @@ export abstract class BaseWebSocketClient {
     });
   }
 
-  async set(key: string, value: unknown): Promise<HPKVResponse> {
+  /**
+   * Stores a value in the key-value store
+   * @param key - The key to store the value under
+   * @param value - The value to store (will be stringified if not a string)
+   * @param partialUpdate - If true, performs a partial update/patch instead of replacing the entire value
+   * @returns A promise that resolves with the API response
+   * @throws Error if the operation fails or connection is lost
+   */
+  async set(key: string, value: unknown, partialUpdate = false): Promise<HPKVResponse> {
+    if (partialUpdate) {
+      return this.sendMessage({
+        op: HPKVOperation.PATCH,
+        key,
+        value: typeof value === 'string' ? value : JSON.stringify(value),
+      });
+    }
+
     return this.sendMessage({
       op: HPKVOperation.SET,
       key,
@@ -36,6 +69,12 @@ export abstract class BaseWebSocketClient {
     });
   }
 
+  /**
+   * Deletes a value from the key-value store
+   * @param key - The key to delete
+   * @returns A promise that resolves with the API response
+   * @throws Error if the key is not found or connection fails
+   */
   async delete(key: string): Promise<HPKVResponse> {
     return this.sendMessage({
       op: HPKVOperation.DELETE,
@@ -43,23 +82,30 @@ export abstract class BaseWebSocketClient {
     });
   }
 
-  async patch(key: string, value: unknown): Promise<HPKVResponse> {
-    return this.sendMessage({
-      op: HPKVOperation.PATCH,
-      key,
-      value: typeof value === 'string' ? value : JSON.stringify(value),
-    });
-  }
-
-  async range(key: string, endKey: string, options: { limit?: number }): Promise<HPKVResponse> {
+  /**
+   * Performs a range query to retrieve multiple keys within a specified range
+   * @param key - The start key of the range
+   * @param endKey - The end key of the range
+   * @param options - Additional options for the range query
+   * @returns A promise that resolves with the API response containing matching records
+   * @throws Error if the operation fails or connection is lost
+   */
+  async range(key: string, endKey: string, options?: RangeQueryOptions): Promise<HPKVResponse> {
     return this.sendMessage({
       op: HPKVOperation.RANGE,
       key,
       endKey,
-      limit: options.limit,
+      limit: options?.limit,
     });
   }
 
+  /**
+   * Performs an atomic increment operation on a numeric value
+   * @param key - The key of the value to increment
+   * @param value - The amount to increment by
+   * @returns A promise that resolves with the API response
+   * @throws Error if the key does not contain a numeric value or connection fails
+   */
   async atomicIncrement(key: string, value: number): Promise<HPKVResponse> {
     return this.sendMessage({
       op: HPKVOperation.ATOMIC,
@@ -68,7 +114,11 @@ export abstract class BaseWebSocketClient {
     });
   }
 
-  // Connection Management
+  /**
+   * Establishes a WebSocket connection to the HPKV API
+   * @returns A promise that resolves when the connection is established
+   * @throws Error if the connection fails or times out
+   */
   async connect(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) {
       return;
@@ -121,15 +171,25 @@ export abstract class BaseWebSocketClient {
     });
   }
 
+  /**
+   * Gracefully closes the WebSocket connection
+   */
   disconnect(): void {
     this.isDisconnecting = true;
     this.cleanup();
   }
 
+  /**
+   * Returns the current connection status
+   * @returns true if connected, false otherwise
+   */
   getConnectionStatus(): boolean {
     return this.isConnected;
   }
 
+  /**
+   * Cleans up resources and closes the WebSocket connection
+   */
   protected cleanup(): void {
     if (this.connectionTimeout) {
       clearTimeout(this.connectionTimeout);
@@ -142,6 +202,10 @@ export abstract class BaseWebSocketClient {
     this.isConnected = false;
   }
 
+  /**
+   * Handles disconnect events and attempts to reconnect
+   * Rejects pending messages after max reconnect attempts
+   */
   protected handleDisconnect(): void {
     if (this.isDisconnecting) {
       this.isDisconnecting = false;
@@ -161,6 +225,10 @@ export abstract class BaseWebSocketClient {
     }
   }
 
+  /**
+   * Processes WebSocket messages and resolves corresponding promises
+   * @param message - The message received from the WebSocket server
+   */
   protected handleMessage(message: HPKVResponse): void {
     // Handle error responses
     if (message.error) {
@@ -181,6 +249,12 @@ export abstract class BaseWebSocketClient {
     }
   }
 
+  /**
+   * Sends a message to the WebSocket server and handles the response
+   * @param message - The message to send
+   * @returns A promise that resolves with the server response
+   * @throws Error if the message times out or connection fails
+   */
   protected async sendMessage(
     message: Omit<HPKVRequestMessage, 'messageId'>
   ): Promise<HPKVResponse> {
