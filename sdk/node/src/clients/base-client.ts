@@ -230,21 +230,28 @@ export abstract class BaseWebSocketClient {
    * @param message - The message received from the WebSocket server
    */
   protected handleMessage(message: HPKVResponse): void {
+    // Skip notification messages
+    if (message.type == 'notification') {
+      return;
+    }
+
+    // Get the next promise from the queue
+    const queueItem = this.messageQueue.shift();
+    if (!queueItem) {
+      return; // No pending promises to resolve
+    }
+
+    const { resolve, reject } = queueItem;
+
     // Handle error responses
-    if (message.error) {
-      const { reject } = this.messageQueue.shift() || {};
-      if (reject) {
-        reject(new Error(message.error));
-      }
+    if (message.success === false || message.code !== 200 || message.error) {
+      reject(new Error(message.error));
       return;
     }
 
     // Handle successful responses
     if (message.messageId !== undefined) {
-      const { resolve } = this.messageQueue.shift() || {};
-      if (resolve) {
-        resolve(message);
-      }
+      resolve(message);
       return;
     }
   }

@@ -8,7 +8,7 @@ import { HPKVResponse, HPKVEventHandler } from '../types';
  */
 export class HPKVSubscriptionClient extends BaseWebSocketClient {
   private readonly token: string;
-  private subscriptions: Map<string, HPKVEventHandler[]> = new Map();
+  private subscriptions: Map<string, HPKVEventHandler> = new Map();
 
   /**
    * Creates a new HPKVSubscriptionClient instance
@@ -30,28 +30,26 @@ export class HPKVSubscriptionClient extends BaseWebSocketClient {
   }
 
   /**
-   * Subscribes to changes for a specific key
+   * Subscribes to changes for subscribedKeys
    * When changes to the key occur, the provided callback will be invoked
    * with the update data
    *
-   * @param key - The key to subscribe to
    * @param callback - Function to be called when the key changes
+   * @returns The callback ID
    */
-  subscribe(key: string, callback: HPKVEventHandler): void {
-    if (!this.subscriptions.has(key)) {
-      this.subscriptions.set(key, []);
-    }
-    this.subscriptions.get(key)?.push(callback);
+  subscribe(callback: HPKVEventHandler): string {
+    const callbackId = Math.random().toString(36).substring(2, 15);
+    this.subscriptions.set(callbackId, callback);
+    return callbackId;
   }
 
   /**
-   * Unsubscribes from changes for a specific key
-   * Removes all callbacks registered for the specified key
+   * Unsubscribes a callback from the subscription client
    *
-   * @param key - The key to unsubscribe from
+   * @param callbackId - The callback ID to unsubscribe
    */
-  unsubscribe(key: string): void {
-    this.subscriptions.delete(key);
+  unsubscribe(callbackId: string): void {
+    this.subscriptions.delete(callbackId);
   }
 
   /**
@@ -64,10 +62,9 @@ export class HPKVSubscriptionClient extends BaseWebSocketClient {
     super.handleMessage(message);
 
     // Handle subscription messages
-    if (message.key) {
-      const subscribers = this.subscriptions.get(message.key);
-      if (subscribers) {
-        subscribers.forEach(callback => callback(message));
+    if (message.type === 'notification') {
+      if (this.subscriptions.size > 0) {
+        this.subscriptions.forEach(callback => callback(message));
       }
     }
   }
