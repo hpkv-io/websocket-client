@@ -10,10 +10,10 @@ dotenv.config();
  * in a basic scenario.
  */
 async function main(): Promise<void> {
-  // Example 1: Using API key (server-side)
+  // Example 1: Using HPKVApiClient (server-side)
   // This is the scenario where you have a server-side application that needs to access the HPKV database to perform operations like storing, updating, and deleting data.
   // Using websockets enhances the performance as it does not require connection to the server for each operation.
-  console.log('\n=== Example 1: Using API Key ===');
+  console.log('\n=== Example 1: Using HPKVApiClient (Server-side) ===');
   const serverClient = HPKVClientFactory.createApiClient(
     process.env.HPKV_API_KEY!,
     process.env.HPKV_API_BASE_URL!
@@ -44,14 +44,22 @@ async function main(): Promise<void> {
 
     // Example of partial update (patch)
     console.log('\nUpdating user preferences...');
-    const patchResponse = await serverClient.set('user:123', {
-      preferences: {
-        theme: 'light',
-        notifications: false,
+    const patchResponse = await serverClient.set(
+      'user:123',
+      {
+        preferences: {
+          theme: 'light',
+          notifications: false,
+        },
       },
-      partialUpdate: true,
-    });
-    console.log('User preferences updated:', patchResponse.success);
+      true
+    );
+
+    if (patchResponse.success && patchResponse.value) {
+      console.log('User preferences updated:', JSON.parse(patchResponse.value));
+    } else {
+      console.log('User preferences update failed:', patchResponse.error);
+    }
 
     // Example of range query
     console.log('\nQuerying users in range...');
@@ -84,6 +92,9 @@ async function main(): Promise<void> {
 
     // Example 2: Subscription Client
     console.log('\n=== Example 2: Subscription Client ===');
+
+    // In real examples, token generation should be done on the server side.
+    // Here we are generating tokens for demonstration purposes.
     const tokenManager = new WebsocketTokenManager(
       process.env.HPKV_API_KEY!,
       process.env.HPKV_API_BASE_URL!
@@ -113,19 +124,19 @@ async function main(): Promise<void> {
 
     // Subscribe to changes (client will receive notifications)
     console.log('Adding handlers for subscribed key changes...');
-    subscriptionClient1.subscribe('user:123', data => {
+    subscriptionClient1.subscribe(data => {
       if (data.value) {
         console.log('Client 1 received user data change:', JSON.parse(data.value));
       }
     });
 
-    subscriptionClient2.subscribe('user:123', data => {
+    subscriptionClient2.subscribe(data => {
       if (data.value) {
         console.log('Client 2 received user data change:', JSON.parse(data.value));
       }
     });
 
-    // Update user data (this will trigger notifications)
+    // Update user data from server (this will trigger notifications)
     console.log('Updating user data (theme changed to light) using server client...');
     await serverClient.set('user:123', {
       ...userData,
@@ -136,7 +147,7 @@ async function main(): Promise<void> {
     });
 
     console.log(
-      'Client 1 Updating user data (added age property with value of 30) using subscription client...'
+      'Client 1 Updating user data from client (added age property with value of 30) using subscription client...'
     );
     await subscriptionClient1.set('user:123', {
       ...userData,

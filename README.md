@@ -1,6 +1,6 @@
 # HPKV WebSocket Client SDK
 
-![Sequence diagram - token generation for HPKV subscription client](assets/images/logo.png)
+![HPKV logo](assets/images/logo.png)
 
 This repository contains HPKV WebSocket client SDK implementations.
 

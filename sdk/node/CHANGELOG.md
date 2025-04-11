@@ -5,7 +5,11 @@ All notable changes to the HPKV WebSocket Client SDK will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] - Released at 2024/04/05
+## [1.1.0]- Released at 2025-04-11
+### Changed
+- enhanced the API for subscription to changes
+
+## [1.0.0] - Released at 2025/04/05
 
 ### Added
 - First stable release
@@ -13,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Complete integration test suite for both API and Subscription clients
 - JSDoc documentation for all client classes and methods
 
-## [0.2.0] - Released at 2024/04/04
+## [0.2.0] - Released at 2025/04/04
 
 ### Added
 - Enhance README with SDK overview, usage examples, and documentation links

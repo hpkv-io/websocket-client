@@ -22,6 +22,7 @@ export interface HPKVRequestMessage {
 }
 
 export interface HPKVResponse {
+  type?: string;
   code: number;
   messageId?: number;
   key?: string;
@@ -34,6 +35,7 @@ export interface HPKVResponse {
   }>;
   count?: number;
   truncated?: boolean;
+  timestamp?: number;
 }
 
 export type HPKVEventHandler = (data: HPKVResponse) => void;
