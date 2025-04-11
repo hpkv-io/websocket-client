@@ -98,12 +98,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
     it('should fail to connect with an invalid token', async () => {
       const invalidClient = HPKVClientFactory.createSubscriptionClient('invalid-token', BASE_URL);
 
-      try {
-        await invalidClient.connect();
-        fail('Expected connection to fail with invalid token');
-      } catch (error) {
-        expect(error).toBeDefined();
-      }
+      await expect(invalidClient.connect()).rejects.toThrow();
     });
   });
 
@@ -257,7 +252,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       const receivedEvents: HPKVResponse[] = [];
 
       // Subscribe to changes
-      subscriptionClient1.subscribe(testKey, event => {
+      subscriptionClient1.subscribe(event => {
         receivedEvents.push(event);
       });
 
@@ -280,9 +275,9 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       await apiClient.set(subscribedKey, 'initial-subscribed');
       await apiClient.set(unsubscribedKey, 'initial-unsubscribed');
 
-      // Create token and client with access to both keys
+      // Create token and client with subscription only to the subscribed key
       const token = await tokenManager.generateToken({
-        subscribeKeys: [subscribedKey, unsubscribedKey],
+        subscribeKeys: [subscribedKey],
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
@@ -292,7 +287,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       const receivedEvents: HPKVResponse[] = [];
 
       // Subscribe to only one key
-      subscriptionClient1.subscribe(subscribedKey, event => {
+      subscriptionClient1.subscribe(event => {
         receivedEvents.push(event);
       });
 
@@ -331,11 +326,11 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       const eventsClient2: HPKVResponse[] = [];
 
       // Set up subscriptions for both clients
-      subscriptionClient1.subscribe(testKey, event => {
+      subscriptionClient1.subscribe(event => {
         eventsClient1.push(event);
       });
 
-      subscriptionClient2.subscribe(testKey, event => {
+      subscriptionClient2.subscribe(event => {
         eventsClient2.push(event);
       });
 
@@ -368,7 +363,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       const receivedEvents: HPKVResponse[] = [];
 
       // Subscribe to changes
-      subscriptionClient1.subscribe(testKey, event => {
+      const callbackId = subscriptionClient1.subscribe(event => {
         receivedEvents.push(event);
       });
 
@@ -381,7 +376,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
 
       // Clear the events array and unsubscribe
       receivedEvents.length = 0;
-      subscriptionClient1.unsubscribe(testKey);
+      subscriptionClient1.unsubscribe(callbackId);
 
       // Make another change after unsubscribing
       await apiClient.set(testKey, 'after-unsubscribe');

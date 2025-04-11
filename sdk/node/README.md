@@ -139,8 +139,8 @@ const subscriptionClient = HPKVClientFactory.createSubscriptionClient(
 
 await subscriptionClient.connect();
 
-// Monitor system events. The key provided to subscribe method, must be one of the keys provided to WebsocketTokenManager to generate token
-subscriptionClient.subscribe('system:events', (data) => {
+// Monitor key changes for the keys provided to WebsocketTokenManager to generate token
+subscriptionClient.subscribe((data) => {
   console.log('System event:', data);
   // Process the event...
 });
@@ -157,11 +157,8 @@ To use `HPKVSubscriptionClient` in your client-side code, you need to setup an A
 
 ```typescript
 // First, call your token generation API endpoint to get a token. Implement 
-const response = await fetch('https://your-server.com/api/token/websocket', {
+const response = await fetch('https://your-token-generation-endpoint', {
   method: 'POST',
-  headers: {
-    'Authorization': 'Bearer your-user-token'
-  }
 });
 const { token } = await response.json();
 
@@ -174,8 +171,8 @@ const subscriptionClient = HPKVClientFactory.createSubscriptionClient(
 await subscriptionClient.connect();
 
 // Subscribe to key changes
-subscriptionClient.subscribe('user:123', (data) => {
-  console.log('User data updated:', data);
+subscriptionClient.subscribe((notification) => {
+  console.log($`value for ${notification.key} changed to ${notification.value} at ${notification.timestamp}`);
   // Update UI...
 });
 ```
@@ -188,8 +185,7 @@ import express from 'express';
 const app = express();
 const tokenManager = new WebsocketTokenManager('your-api-key', 'your api base url');
 
-// Implement your own authentication middleware here
-app.use('/api/token', authenticateUser);
+app.use('/api/token');
 
 app.post('/api/token/websocket', async (req, res) => {
   try {
@@ -213,8 +209,8 @@ Below diagram illustrates the process for token generation and usage at the clie
 #### Notes
 
 1. **Real-time Notifications**: The subscription system will notify clients of any changes to monitored keys, regardless of how the change was made:
-   - Changes through WebSocket API
-   - Changes through REST API
+   - Changes applied through WebSocket API
+   - Changes applied through REST API
 
 2. **Access Pattern**: The `accessPattern` parameter in token generation restricts which keys the token can perform operations on. This pattern is a regex that validates keys for all operations except subscription notifications. You can
 generate tokens that allow operations on specific keys, or deny operations on any key or allow operations on all keys.
@@ -233,18 +229,10 @@ class HPKVClientFactory {
   static createSubscriptionClient(token: string, baseUrl: string): HPKVSubscriptionClient;
 }
 ```
-### Request and Response Types
+### Types
 ```typescript
-interface HPKVRequestMessage {
-  op: HPKVOperation;
-  key: string;
-  value?: string;
-  messageId?: number;
-  endKey?: string;
-  limit?: number;
-}
-
 interface HPKVResponse {
+  type?: string
   code: number;
   messageId?: number;
   key?: string;
@@ -257,6 +245,11 @@ interface HPKVResponse {
   }>;
   count?: number;
   truncated?: boolean;
+  timestamp?: number
+}
+
+interface RangeQueryOptions {
+  limit?: number;
 }
 ```
 
@@ -302,9 +295,9 @@ class HPKVSubscriptionClient {
   range(key: string, endKey: string, options: { limit?: number }): Promise<HPKVResponse>;
   atomicIncrement(key: string, value: number): Promise<HPKVResponse>;
   
-  // Subscription Operations
-  subscribe(key: string, callback: (data: any) => void): void;
-  unsubscribe(key: string): void;
+  // Adding subscribers to key changes.
+  subscribe(callback: (data: HPKVResponse) => void): string;
+  unsubscribe(callbackId: string): void;
 }
 ```
 
@@ -338,7 +331,7 @@ const token = await tokenManager.generateToken({
 const client = HPKVClientFactory.createSubscriptionClient(token, baseUrl);
 await client.connect();
 
-client.subscribe('document:123', (data) => {
+client.subscribe((data) => {
   // Update UI with new document content
   updateDocumentUI(data.value);
 });
@@ -349,7 +342,7 @@ client.subscribe('document:123', (data) => {
 ```typescript
 // Server-side: Generate token for dashboard metrics
 const token = await tokenManager.generateToken({
-  subscribeKeys: ['metrics:*'],
+  subscribeKeys: ['metrics:users','metrics:revenue'],
   accessPattern: '^metrics:.*$'
 });
 
@@ -357,12 +350,14 @@ const token = await tokenManager.generateToken({
 const client = HPKVClientFactory.createSubscriptionClient(token, baseUrl);
 await client.connect();
 
-client.subscribe('metrics:users', (data) => {
-  updateUserCount(data.value);
-});
+client.subscribe((data) => {
+  if(data.key == 'metrics:users'){
+    updateUserCount(data.value);
+  }
 
-client.subscribe('metrics:revenue', (data) => {
-  updateRevenueChart(data.value);
+  if(data.key == 'metrics:revenue'){
+    updateRevenueChart(data.value);
+  }
 });
 ```
 
