@@ -1,5 +1,10 @@
 # HPKV WebSocket Client SDK
 
+[![npm version](https://img.shields.io/npm/v/@hpkv/websocket-client.svg)](https://www.npmjs.com/package/@hpkv/websocket-client)
+[![npm downloads](https://img.shields.io/npm/dm/@hpkv/websocket-client.svg)](https://www.npmjs.com/package/@hpkv/websocket-client)
+[![Build Status](https://github.com/hpkv-io/websocket-client/actions/workflows/release-validation.yml/badge.svg)](https://github.com/hpkv-io/websocket-client/actions/workflows/release-validation.yml)
+[![License](https://img.shields.io/npm/l/@hpkv/websocket-client.svg)](https://github.com/hpkv/websocket-client/blob/main/LICENSE)
+
 A WebSocket client SDK for interacting with the [HPKV](https://hpkv.io/) (High-Performance Key-Value) service. This SDK provides real-time data access and updates through WebSocket connections.
 
 ## Features
