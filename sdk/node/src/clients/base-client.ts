@@ -10,11 +10,97 @@ import {
 import { ConnectionError, HPKVError, TimeoutError } from './errors';
 import { EventEmitter } from 'events';
 
-// Use native WebSocket in browser or ws package in Node.js
-const WebSocketImpl: typeof WebSocketNode =
-  typeof window !== 'undefined' && window.WebSocket
-    ? (window.WebSocket as unknown as typeof WebSocketNode)
-    : WebSocketNode;
+// Define a type that works for timeouts in both Node.js and browser environments
+type TimeoutHandle = NodeJS.Timeout | number;
+
+// Define a common interface for both Node.js and Browser WebSockets
+interface IWebSocket {
+  readyState: number;
+  on(event: string, listener: (...args: any[]) => void): IWebSocket;
+  removeAllListeners(): IWebSocket;
+  send(data: string): void;
+  close(): void;
+}
+
+/**
+ * WebSocket adapter for browser environments
+ * Makes the browser WebSocket API compatible with the Node.js ws package API
+ */
+class BrowserWebSocketAdapter implements IWebSocket {
+  private socket: WebSocket;
+  private eventHandlers: Record<string, ((...args: any[]) => void)[]> = {
+    message: [],
+    open: [],
+    close: [],
+    error: [],
+  };
+
+  constructor(url: string) {
+    this.socket = new WebSocket(url);
+
+    // Set up event listeners for the native WebSocket
+    this.socket.addEventListener('message', event => {
+      this.eventHandlers.message.forEach(handler => handler(event.data));
+    });
+
+    this.socket.addEventListener('open', _event => {
+      this.eventHandlers.open.forEach(handler => handler());
+    });
+
+    this.socket.addEventListener('close', event => {
+      this.eventHandlers.close.forEach(handler => handler(event.code, event.reason));
+    });
+
+    this.socket.addEventListener('error', event => {
+      this.eventHandlers.error.forEach(handler => handler(event));
+    });
+  }
+
+  on(event: string, listener: (...args: any[]) => void): IWebSocket {
+    if (this.eventHandlers[event]) {
+      this.eventHandlers[event].push(listener);
+    }
+    return this;
+  }
+
+  removeAllListeners(): IWebSocket {
+    // Clear all event handlers
+    Object.keys(this.eventHandlers).forEach(event => {
+      this.eventHandlers[event] = [];
+    });
+    return this;
+  }
+
+  send(data: string): void {
+    this.socket.send(data);
+  }
+
+  close(): void {
+    this.socket.close();
+  }
+
+  get readyState(): number {
+    return this.socket.readyState;
+  }
+}
+
+// Constants to match WebSocket states across environments
+const WS_CONSTANTS = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3,
+};
+
+/**
+ * Creates a WebSocket instance that works in both Node.js and browser environments
+ */
+function createWebSocket(url: string): IWebSocket {
+  if (typeof window !== 'undefined' && window.WebSocket) {
+    return new BrowserWebSocketAdapter(url);
+  }
+  return new WebSocketNode(url) as unknown as IWebSocket;
+}
 
 /**
  * Connection state for WebSocket client
@@ -32,7 +118,7 @@ enum ConnectionState {
 interface PendingRequest {
   resolve: (value: HPKVResponse) => void;
   reject: (reason?: unknown) => void;
-  timer: NodeJS.Timeout;
+  timer: TimeoutHandle;
   timestamp: number;
   operation: HPKVOperation;
 }
@@ -61,16 +147,16 @@ const DEFAULT_TIMEOUTS = {
  * for the HPKV WebSocket API.
  */
 export abstract class BaseWebSocketClient {
-  protected ws: WebSocketNode | null = null;
+  protected ws: IWebSocket | null = null;
   protected baseUrl: string;
   protected messageId = 0;
   protected connectionPromise: Promise<void> | null = null;
   protected connectionState: ConnectionState = ConnectionState.DISCONNECTED;
   protected reconnectAttempts = 0;
-  protected connectionTimeout: NodeJS.Timeout | null = null;
+  protected connectionTimeout: TimeoutHandle | null = null;
   protected operationTimeoutMs: number | null = null;
 
-  protected cleanupInterval: NodeJS.Timeout | null = null;
+  protected cleanupInterval: TimeoutHandle | null = null;
   protected emitter = new EventEmitter();
   protected messageMap = new Map<number, PendingRequest>();
   protected requestQueue: Array<() => Promise<unknown>> = [];
@@ -242,7 +328,7 @@ export abstract class BaseWebSocketClient {
     // If already connected, resolve immediately
     if (
       this.connectionState === ConnectionState.CONNECTED &&
-      this.ws?.readyState === WebSocketNode.OPEN
+      this.ws?.readyState === WS_CONSTANTS.OPEN
     ) {
       return;
     }
@@ -264,9 +350,10 @@ export abstract class BaseWebSocketClient {
           }
         }, this.timeouts.CONNECTION);
 
-        this.ws = new WebSocketImpl(this.buildConnectionUrl());
+        const ws = createWebSocket(this.buildConnectionUrl());
+        this.ws = ws;
 
-        this.ws!.on('open', () => {
+        ws.on('open', () => {
           this.connectionState = ConnectionState.CONNECTED;
           this.emitter.emit('connected');
 
@@ -280,12 +367,12 @@ export abstract class BaseWebSocketClient {
           resolve();
         });
 
-        this.ws!.on('message', (data: string) => {
+        ws.on('message', (data: string) => {
           const message = JSON.parse(data);
           this.handleMessage(message);
         });
 
-        this.ws!.on('close', (code: number, reason: string) => {
+        ws.on('close', (code: number, reason: string) => {
           const wasConnected = this.connectionState === ConnectionState.CONNECTED;
           this.connectionState = ConnectionState.DISCONNECTED;
 
@@ -296,7 +383,7 @@ export abstract class BaseWebSocketClient {
           this.handleDisconnect(code, reason);
         });
 
-        this.ws!.on('error', error => {
+        ws.on('error', (error: Error) => {
           if (this.connectionState === ConnectionState.CONNECTING) {
             if (this.connectionTimeout) {
               clearTimeout(this.connectionTimeout);
@@ -334,21 +421,22 @@ export abstract class BaseWebSocketClient {
     }
 
     return new Promise<void>(resolve => {
-      if (!this.ws || this.ws.readyState === WebSocketNode.CLOSED) {
+      if (!this.ws || this.ws.readyState === WS_CONSTANTS.CLOSED) {
         this.connectionState = ConnectionState.DISCONNECTED;
         resolve();
+        return;
       }
 
-      this.ws!.removeAllListeners();
+      const ws = this.ws;
+      ws.removeAllListeners();
 
       const onClose = (): void => {
         this.connectionState = ConnectionState.DISCONNECTED;
         this.emitter.emit('disconnected');
         resolve();
-        return;
       };
 
-      this.ws!.on('close', onClose);
+      ws.on('close', onClose);
       this.cleanup();
     });
   }
@@ -440,8 +528,8 @@ export abstract class BaseWebSocketClient {
 
     if (this.ws) {
       if (
-        this.ws.readyState === WebSocketNode.OPEN ||
-        this.ws.readyState === WebSocketNode.CONNECTING
+        this.ws.readyState === WS_CONSTANTS.OPEN ||
+        this.ws.readyState === WS_CONSTANTS.CONNECTING
       ) {
         this.ws.close();
       }
@@ -597,7 +685,7 @@ export abstract class BaseWebSocketClient {
     if (
       this.connectionState !== ConnectionState.CONNECTED ||
       !this.ws ||
-      this.ws.readyState !== WebSocketNode.OPEN
+      this.ws.readyState !== WS_CONSTANTS.OPEN
     ) {
       try {
         await this.connect();
