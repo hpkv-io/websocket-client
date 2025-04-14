@@ -1,5 +1,5 @@
 import { BaseWebSocketClient } from './base-client';
-import { HPKVResponse, HPKVEventHandler } from '../types';
+import { HPKVResponse, HPKVEventHandler, ConnectionConfig } from '../types';
 
 /**
  * Client for subscribing to real-time updates on key changes
@@ -14,9 +14,10 @@ export class HPKVSubscriptionClient extends BaseWebSocketClient {
    * Creates a new HPKVSubscriptionClient instance
    * @param token - The authentication token to use for WebSocket connections
    * @param baseUrl - The base URL of the HPKV API
+   * @param config - The connection configuration
    */
-  constructor(token: string, baseUrl: string) {
-    super(baseUrl);
+  constructor(token: string, baseUrl: string, config?: ConnectionConfig) {
+    super(baseUrl, config);
     this.token = token;
   }
 

@@ -7,6 +7,18 @@ export enum HPKVOperation {
   ATOMIC = 6,
 }
 
+export interface ConnectionStats {
+  isConnected: boolean;
+  reconnectAttempts: number;
+  messagesPending: number;
+}
+
+export interface ConnectionConfig {
+  maxReconnectAttempts?: number;
+  initialDelayBetweenReconnects?: number;
+  maxDelayBetweenReconnects?: number;
+}
+
 export interface HPKVTokenConfig {
   subscribeKeys: string[];
   accessPattern?: string;
@@ -15,7 +27,7 @@ export interface HPKVTokenConfig {
 export interface HPKVRequestMessage {
   op: HPKVOperation;
   key: string;
-  value?: string;
+  value?: string | number;
   messageId?: number;
   endKey?: string;
   limit?: number;
@@ -24,9 +36,11 @@ export interface HPKVRequestMessage {
 export interface HPKVResponse {
   type?: string;
   code: number;
+  message?: string;
   messageId?: number;
   key?: string;
-  value?: string;
+  value?: string | number;
+  newValue?: number;
   error?: string;
   success?: boolean;
   records?: Array<{

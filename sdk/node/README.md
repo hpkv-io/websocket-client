@@ -57,11 +57,30 @@ import { HPKVClientFactory } from '@hpkv/websocket-client';
 // Create a client for server-side operations
 const apiClient = HPKVClientFactory.createApiClient(
   'your-api-key',
-  'your-hpkv-api-base-url'
+  'your-hpkv-api-base-url',
+  {
+    // Optional connection configuration
+    maxReconnectAttempts: 5,
+    initialDelayBetweenReconnects: 1000,
+    maxDelayBetweenReconnects: 30000
+  }
 );
 
 // Connect to the server
 await apiClient.connect();
+
+// Register event listeners
+apiClient.on('connected', () => {
+  console.log('Connected to HPKV server');
+});
+
+apiClient.on('disconnected', () => {
+  console.log('Disconnected from HPKV server');
+});
+
+apiClient.on('reconnecting', (data) => {
+  console.log(`Reconnecting attempt ${data.attempt}/${data.maxAttempts}`);
+});
 
 // Basic CRUD Operations
 await apiClient.set('my-key', 'my-value');
@@ -101,7 +120,8 @@ await apiClient.atomicIncrement('counter:123', 1);
 await apiClient.atomicIncrement('counter:123', -1);
 
 // Cleanup
-apiClient.disconnect();
+await apiClient.disconnect();
+apiClient.destroy();
 ```
 
 ### HPKVSubscriptionClient
@@ -132,28 +152,53 @@ const token = await tokenManager.generateToken({
 });
 ```
 #### Subscribing to Changes
-Once you generated the token, you can use it to connect and get notification when value of the subscribed key changes in the database. The pub/sub system works through a bi-directional WebSocket connection. Any change to a monitored key (whether through WebSocket or REST API) will trigger notifications to all connected clients that are subscribed to that key.
+Once you generated the token, you can use it to connect and get notification when value of the subscribed keys changes in the database. Use the `subscribe()` method to add a handler for the changes. The paramter passed to the handler includes the changed key and the new value of the key.
 ```typescript
 import HPKVClientFactory from '@hpkv/websocket-client';
 
-// Create subscription client using the generated token
+// Create subscription client using the generated token, You should create an endpoint in your server to generate token
 const subscriptionClient = HPKVClientFactory.createSubscriptionClient(
   token,
-  'your_api_base_url'
+  'your_api_base_url',
+  {
+    // Optional connection configuration
+    maxReconnectAttempts: 5,
+    initialDelayBetweenReconnects: 1000,
+    maxDelayBetweenReconnects: 30000
+  }
 );
+
+// Register connection event listeners
+subscriptionClient.on('connected', () => {
+  console.log('Connected to subscription server');
+});
+
+subscriptionClient.on('disconnected', () => {
+  console.log('Disconnected from subscription server');
+});
+
+subscriptionClient.on('reconnecting', (data) => {
+  console.log(`Reconnecting attempt ${data.attempt}/${data.maxAttempts}`);
+});
 
 await subscriptionClient.connect();
 
 // Monitor key changes for the keys provided to WebsocketTokenManager to generate token
-subscriptionClient.subscribe((data) => {
-  console.log('System event:', data);
+const callbackId = subscriptionClient.subscribe((data) => {
+  console.log(`value of ${data.key} changed to ${data.value}`);
   // Process the event...
 });
+
+// Later, if you want to stop receiving notifications:
+subscriptionClient.unsubscribe(callbackId);
 
 //You can also perform CRUD operations only on the keys specified during token generation
 const logs = await subscriptionClient.get("system:logs")
 await subscriptionClient.set("system:logs","log entry")
 
+// When you're done with the client
+await subscriptionClient.disconnect();
+subscriptionClient.destroy();
 ```
 
 #### Using HPKVSubscriptionClient on Client-Side
@@ -230,18 +275,28 @@ The factory class for creating appropriate client instances:
 
 ```typescript
 class HPKVClientFactory {
-  static createApiClient(apiKey: string, baseUrl: string): HPKVApiClient;
-  static createSubscriptionClient(token: string, baseUrl: string): HPKVSubscriptionClient;
+  static createApiClient(apiKey: string, baseUrl: string, config?: ConnectionConfig): HPKVApiClient;
+  static createSubscriptionClient(token: string, baseUrl: string, config?: ConnectionConfig): HPKVSubscriptionClient;
 }
 ```
+
+### ConnectionConfig
+```typescript
+interface ConnectionConfig {
+  maxReconnectAttempts?: number;      // Maximum number of reconnection attempts
+  initialDelayBetweenReconnects?: number;  // Initial delay in ms between reconnection attempts
+  maxDelayBetweenReconnects?: number;  // Maximum delay in ms between reconnection attempts
+}
+```
+
 ### Types
 ```typescript
 interface HPKVResponse {
-  type?: string
+  type?: string               // Message type, "notification" for subscription events
   code: number;
   messageId?: number;
   key?: string;
-  value?: string;
+  value?: string | number;    // Value can be string or number
   error?: string;
   success?: boolean;
   records?: Array<{
@@ -250,7 +305,7 @@ interface HPKVResponse {
   }>;
   count?: number;
   truncated?: boolean;
-  timestamp?: number
+  timestamp?: number          // Timestamp of when the notification was generated
 }
 
 interface RangeQueryOptions {
@@ -262,21 +317,28 @@ interface RangeQueryOptions {
 
 ```typescript
 class HPKVApiClient {
-  constructor(apiKey: string, baseUrl: string);
+  constructor(apiKey: string, baseUrl: string, config?: ConnectionConfig);
   
   // Connection Management
   connect(): Promise<void>;
-  disconnect(): void;
-  getConnectionStatus(): boolean;
+  disconnect(cancelPendingRequests?: boolean): Promise<void>;  // Async function
+  getConnectionStats(): ConnectionStats;
+  
+  // Event Handling
+  on(event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed', listener: Function): void;
+  off(event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed', listener: Function): void;
+  
+  // Resource Management
+  destroy(): void;  // Clean up resources and terminate connection
   
   // CRUD Operations
-  get(key: string): Promise<HPKVResponse>;
-  set(key: string, value: any, partialUpdate=false): Promise<HPKVResponse>;
-  delete(key: string): Promise<HPKVResponse>;
+  get(key: string, timeoutMs?: number): Promise<HPKVResponse>;
+  set(key: string, value: any, partialUpdate?: boolean, timeoutMs?: number): Promise<HPKVResponse>;
+  delete(key: string, timeoutMs?: number): Promise<HPKVResponse>;
   
   // Advanced Operations
-  range(key: string, endKey: string, options: { limit?: number }): Promise<HPKVResponse>;
-  atomicIncrement(key: string, value: number): Promise<HPKVResponse>;
+  range(key: string, endKey: string, options?: RangeQueryOptions, timeoutMs?: number): Promise<HPKVResponse>;
+  atomicIncrement(key: string, value: number, timeoutMs?: number): Promise<HPKVResponse>;
 }
 ```
 
@@ -284,21 +346,28 @@ class HPKVApiClient {
 
 ```typescript
 class HPKVSubscriptionClient {
-  constructor(token: string, baseUrl: string);
+  constructor(token: string, baseUrl: string, config?: ConnectionConfig);
   
   // Connection Management
   connect(): Promise<void>;
-  disconnect(): void;
-  getConnectionStatus(): boolean;
+  disconnect(cancelPendingRequests?: boolean): Promise<void>;  // Async function
+  getConnectionStats(): ConnectionStats;
+  
+  // Event Handling
+  on(event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed', listener: Function): void;
+  off(event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed', listener: Function): void;
+  
+  // Resource Management
+  destroy(): void;  // Clean up resources and terminate connection
   
   // CRUD Operations
-  get(key: string): Promise<HPKVResponse>;
-  set(key: string, value: any, partialUpdate=false): Promise<HPKVResponse>;
-  delete(key: string): Promise<HPKVResponse>;
+  get(key: string, timeoutMs?: number): Promise<HPKVResponse>;
+  set(key: string, value: any, partialUpdate?: boolean, timeoutMs?: number): Promise<HPKVResponse>;
+  delete(key: string, timeoutMs?: number): Promise<HPKVResponse>;
   
   // Advanced Operations
-  range(key: string, endKey: string, options: { limit?: number }): Promise<HPKVResponse>;
-  atomicIncrement(key: string, value: number): Promise<HPKVResponse>;
+  range(key: string, endKey: string, options?: RangeQueryOptions, timeoutMs?: number): Promise<HPKVResponse>;
+  atomicIncrement(key: string, value: number, timeoutMs?: number): Promise<HPKVResponse>;
   
   // Adding subscribers to key changes.
   subscribe(callback: (data: HPKVResponse) => void): string;
@@ -375,7 +444,15 @@ client.subscribe((data) => {
 
 2. **Connection Management**:
    - Handle token regeneration and reconnection attempts as the generated tokens expire after 2 hours
-   - Implement proper cleanup to disconnect when the connection is not needed
+   - Always call `disconnect()` with await when closing connections
+   - Call `destroy()` to properly clean up resources
+   - Set appropriate ConnectionConfig values for your use case:
+     - Higher maxReconnectAttempts for critical applications
+     - Lower values for less critical applications to avoid resource consumption
+
+3. **Error Handling**:
+   - Listen for reconnection events to do what is necessary when client reconnects
+   - Implement proper error handling for operation timeouts
 
 ## Read More
 

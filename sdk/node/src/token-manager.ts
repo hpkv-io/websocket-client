@@ -1,3 +1,4 @@
+import { AuthenticationError, HPKVError } from './clients/errors';
 import { HPKVTokenConfig } from './types';
 
 export class WebsocketTokenManager {
@@ -6,10 +7,10 @@ export class WebsocketTokenManager {
 
   constructor(apiKey: string, baseUrl: string) {
     if (!apiKey) {
-      throw new Error('API key is required to generate a token');
+      throw new AuthenticationError('API key is required to generate a token');
     }
     if (!baseUrl) {
-      throw new Error('Base URL is required to generate a token');
+      throw new HPKVError('Base URL is required to generate a token');
     }
 
     this.apiKey = apiKey;
@@ -28,7 +29,10 @@ export class WebsocketTokenManager {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to generate token: ${response.statusText}`);
+      if (response.status === 401 || response.status === 403) {
+        throw new AuthenticationError(`Failed to generate token: ${response.statusText}`);
+      }
+      throw new HPKVError(`Failed to generate token: ${response.statusText}`);
     }
 
     const data = await response.json();

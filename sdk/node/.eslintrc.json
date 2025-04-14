@@ -29,7 +29,12 @@
       "varsIgnorePattern": "^_",
       "caughtErrorsIgnorePattern": "^_"
     }],
-    "prettier/prettier": "error",
+   "prettier/prettier": [
+    "error",
+    {
+      "endOfLine": "auto"
+    }
+  ],
     "no-console": ["warn", { "allow": ["warn", "error", "info"] }],
     "no-useless-catch": "error"
   },
