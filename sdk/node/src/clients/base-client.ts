@@ -8,7 +8,7 @@ import {
   ConnectionConfig,
 } from '../types';
 import { ConnectionError, HPKVError, TimeoutError } from './errors';
-import { EventEmitter } from 'node:events';
+import { EventEmitter } from 'events';
 
 /**
  * Connection state for WebSocket client
