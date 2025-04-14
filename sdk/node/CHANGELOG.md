@@ -5,7 +5,11 @@ All notable changes to the HPKV WebSocket Client SDK will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - Released at 2025-04-18
+## [1.2.1] - Released at 2025-04-14
+### Fixed
+- Webpack compatibility issue
+
+## [1.2.0] - Released at 2025-04-14
 ### Added
 - On and Off functions to subscribe
 - Optional connection configuration
@@ -18,11 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 - disconnect() function was converted to async
+- return type for getConnectionStatus() method changed
 
 ## [1.1.0]- Released at 2025-04-11
 ### Changed
 - enhanced the API for subscription to changes
-- return type for getConnectionStatus() method changed
+
 
 ## [1.0.0] - Released at 2025/04/05
 
