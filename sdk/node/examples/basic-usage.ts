@@ -40,7 +40,10 @@ async function main(): Promise<void> {
     // Retrieve user data
     console.log('Retrieving user data...');
     const getResponse = await serverClient.get('user:123');
-    console.log('Retrieved user data:', getResponse.value ? JSON.parse(getResponse.value) : null);
+    console.log(
+      'Retrieved user data:',
+      getResponse.value ? JSON.parse(getResponse.value.toString()) : null
+    );
 
     // Example of partial update (patch)
     console.log('\nUpdating user preferences...');
@@ -55,8 +58,8 @@ async function main(): Promise<void> {
       true
     );
 
-    if (patchResponse.success && patchResponse.value) {
-      console.log('User preferences updated:', JSON.parse(patchResponse.value));
+    if (patchResponse.success) {
+      console.log('User preferences updated:', patchResponse.message);
     } else {
       console.log('User preferences update failed:', patchResponse.error);
     }
@@ -88,7 +91,7 @@ async function main(): Promise<void> {
     console.log('Increment successful:', incrementResponse.success);
 
     const visitsResponse = await serverClient.get('user:123:visits');
-    console.log('User visit count:', visitsResponse.value ? parseInt(visitsResponse.value) : 0);
+    console.log('User visit count:', visitsResponse.value);
 
     // Example 2: Subscription Client
     console.log('\n=== Example 2: Subscription Client ===');
@@ -126,13 +129,13 @@ async function main(): Promise<void> {
     console.log('Adding handlers for subscribed key changes...');
     subscriptionClient1.subscribe(data => {
       if (data.value) {
-        console.log('Client 1 received user data change:', JSON.parse(data.value));
+        console.log('Client 1 received user data change:', JSON.parse(data.value.toString()));
       }
     });
 
     subscriptionClient2.subscribe(data => {
       if (data.value) {
-        console.log('Client 2 received user data change:', JSON.parse(data.value));
+        console.log('Client 2 received user data change:', JSON.parse(data.value.toString()));
       }
     });
 
@@ -158,12 +161,18 @@ async function main(): Promise<void> {
       age: 30,
     });
 
+    // Wait for 1 second to ensure the subscription client has received the update
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
     console.log('\nCleaning up...');
     await serverClient.delete('user:123');
     await serverClient.delete('user:123:visits');
-    serverClient.disconnect();
-    subscriptionClient1.disconnect();
-    subscriptionClient2.disconnect();
+    await serverClient.disconnect(false);
+    await subscriptionClient1.disconnect(false);
+    await subscriptionClient2.disconnect(false);
+    serverClient.destroy();
+    subscriptionClient1.destroy();
+    subscriptionClient2.destroy();
   } catch (error) {
     console.error('Error:', error);
   }
