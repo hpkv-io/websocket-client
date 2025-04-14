@@ -1,4 +1,4 @@
-import WebSocket from 'ws';
+import WebSocketNode from 'ws';
 import {
   HPKVResponse,
   HPKVRequestMessage,
@@ -9,6 +9,12 @@ import {
 } from '../types';
 import { ConnectionError, HPKVError, TimeoutError } from './errors';
 import { EventEmitter } from 'events';
+
+// Use native WebSocket in browser or ws package in Node.js
+const WebSocketImpl: typeof WebSocketNode =
+  typeof window !== 'undefined' && window.WebSocket
+    ? (window.WebSocket as unknown as typeof WebSocketNode)
+    : WebSocketNode;
 
 /**
  * Connection state for WebSocket client
@@ -55,7 +61,7 @@ const DEFAULT_TIMEOUTS = {
  * for the HPKV WebSocket API.
  */
 export abstract class BaseWebSocketClient {
-  protected ws: WebSocket | null = null;
+  protected ws: WebSocketNode | null = null;
   protected baseUrl: string;
   protected messageId = 0;
   protected connectionPromise: Promise<void> | null = null;
@@ -236,7 +242,7 @@ export abstract class BaseWebSocketClient {
     // If already connected, resolve immediately
     if (
       this.connectionState === ConnectionState.CONNECTED &&
-      this.ws?.readyState === WebSocket.OPEN
+      this.ws?.readyState === WebSocketNode.OPEN
     ) {
       return;
     }
@@ -258,7 +264,7 @@ export abstract class BaseWebSocketClient {
           }
         }, this.timeouts.CONNECTION);
 
-        this.ws = new WebSocket(this.buildConnectionUrl());
+        this.ws = new WebSocketImpl(this.buildConnectionUrl());
 
         this.ws!.on('open', () => {
           this.connectionState = ConnectionState.CONNECTED;
@@ -328,7 +334,7 @@ export abstract class BaseWebSocketClient {
     }
 
     return new Promise<void>(resolve => {
-      if (!this.ws || this.ws.readyState === WebSocket.CLOSED) {
+      if (!this.ws || this.ws.readyState === WebSocketNode.CLOSED) {
         this.connectionState = ConnectionState.DISCONNECTED;
         resolve();
       }
@@ -433,7 +439,10 @@ export abstract class BaseWebSocketClient {
     }
 
     if (this.ws) {
-      if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) {
+      if (
+        this.ws.readyState === WebSocketNode.OPEN ||
+        this.ws.readyState === WebSocketNode.CONNECTING
+      ) {
         this.ws.close();
       }
 
@@ -588,7 +597,7 @@ export abstract class BaseWebSocketClient {
     if (
       this.connectionState !== ConnectionState.CONNECTED ||
       !this.ws ||
-      this.ws.readyState !== WebSocket.OPEN
+      this.ws.readyState !== WebSocketNode.OPEN
     ) {
       try {
         await this.connect();
