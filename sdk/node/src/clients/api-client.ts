@@ -1,3 +1,4 @@
+import { ConnectionConfig } from '../types';
 import { BaseWebSocketClient } from './base-client';
 
 /**
@@ -11,9 +12,10 @@ export class HPKVApiClient extends BaseWebSocketClient {
    * Creates a new HPKVApiClient instance
    * @param apiKey - The API key to use for authentication
    * @param baseUrl - The base URL of the HPKV API
+   * @param config - The connection configuration
    */
-  constructor(apiKey: string, baseUrl: string) {
-    super(baseUrl);
+  constructor(apiKey: string, baseUrl: string, config?: ConnectionConfig) {
+    super(baseUrl, config);
     this.apiKey = apiKey;
   }
 

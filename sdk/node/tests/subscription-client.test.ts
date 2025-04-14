@@ -1,7 +1,6 @@
 /// <reference types="jest" />
-import { HPKVClientFactory, WebsocketTokenManager } from '../src';
+import { HPKVClientFactory, HPKVSubscriptionClient, WebsocketTokenManager } from '../src';
 import { HPKVApiClient } from '../src/clients/api-client';
-import { HPKVSubscriptionClient } from '../src/clients/subscription-client';
 import { HPKVResponse } from '../src/types';
 import dotenv from 'dotenv';
 
@@ -15,11 +14,8 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
   let apiClient: HPKVApiClient;
   let tokenManager: WebsocketTokenManager;
   const keysToCleanup: string[] = [];
-
-  // We'll use these for various test scenarios
-  let subscriptionClient1: HPKVSubscriptionClient;
-  let subscriptionClient2: HPKVSubscriptionClient;
-  let restrictedClient: HPKVSubscriptionClient;
+  const activeClients: HPKVSubscriptionClient[] = [];
+  const activeTimers: NodeJS.Timeout[] = [];
 
   // Helper to generate unique test keys
   function generateTestKey(testName: string): string {
@@ -28,18 +24,56 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
     return key;
   }
 
+  // Helper to track and clean up timers
+  function safeSetTimeout(callback: (value: unknown) => void, ms: number): NodeJS.Timeout {
+    const timer = setTimeout(callback, ms);
+    activeTimers.push(timer);
+    return timer;
+  }
+
+  // Helper to track clients for cleanup
+  function trackClient(client: HPKVSubscriptionClient): HPKVSubscriptionClient {
+    activeClients.push(client);
+    return client;
+  }
+
   beforeAll(async () => {
     apiClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
     tokenManager = new WebsocketTokenManager(API_KEY, BASE_URL);
+    await apiClient.connect();
+  });
+
+  afterEach(async () => {
+    // Clean up any active timers after each test
+    activeTimers.forEach(timer => clearTimeout(timer));
+    activeTimers.length = 0;
+
+    // Properly destroy any clients that weren't properly closed
+    await Promise.all(
+      activeClients.map(async client => {
+        try {
+          client.off('connected', () => {});
+          client.off('disconnected', () => {});
+          client.off('reconnecting', () => {});
+          // First disconnect if still connected
+          if (client.getConnectionStats().isConnected) {
+            await client.disconnect(false);
+          }
+
+          // Then destroy to clean up all resources
+          if (typeof client.destroy === 'function') {
+            client.destroy();
+          }
+        } catch (error) {
+          // Ignore errors during cleanup
+        }
+      })
+    );
+    activeClients.length = 0;
   });
 
   afterAll(async () => {
     try {
-      // Clean up clients
-      if (subscriptionClient1) subscriptionClient1.disconnect();
-      if (subscriptionClient2) subscriptionClient2.disconnect();
-      if (restrictedClient) restrictedClient.disconnect();
-
       // Ensure API client is connected for cleanup
       await apiClient.connect();
 
@@ -59,7 +93,14 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
     } catch (error) {
       console.error('Error during test cleanup:', error);
     } finally {
-      apiClient.disconnect();
+      // Properly destroy the API client
+      await apiClient.disconnect();
+      if (typeof apiClient.destroy === 'function') {
+        apiClient.destroy();
+      }
+
+      // Give event loop a chance to clean up before test suite exits
+      await new Promise(resolve => safeSetTimeout(resolve, 500));
     }
   });
 
@@ -73,10 +114,12 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
-      expect(subscriptionClient1.getConnectionStatus()).toBe(true);
+      expect(subscriptionClient.getConnectionStats().isConnected).toBe(true);
     });
 
     it('should disconnect successfully', async () => {
@@ -88,32 +131,39 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      const tempClient = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
+      const tempClient = trackClient(HPKVClientFactory.createSubscriptionClient(token, BASE_URL));
       await tempClient.connect();
-      tempClient.disconnect();
 
-      expect(tempClient.getConnectionStatus()).toBe(false);
+      // Give some time for connection to establish fully
+      await new Promise(resolve => safeSetTimeout(resolve, 100));
+
+      await tempClient.disconnect();
+
+      // Disconnection may not be instant, allow time for it to complete
+      await new Promise(resolve => safeSetTimeout(resolve, 300));
+
+      expect(tempClient.getConnectionStats().isConnected).toBe(false);
     });
 
     it('should fail to connect with an invalid token', async () => {
-      const invalidClient = HPKVClientFactory.createSubscriptionClient('invalid-token', BASE_URL);
+      const invalidClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient('invalid-token', BASE_URL)
+      );
 
-      await expect(invalidClient.connect()).rejects.toThrow();
+      try {
+        await invalidClient.connect();
+        fail('Expected connection to fail with invalid token');
+      } catch (error) {
+        // Connection should fail with an error
+        expect(error).toBeDefined();
+      }
+
+      // Either the error event fired or the connection failed
+      expect(invalidClient.getConnectionStats().isConnected).toBe(false);
     });
   });
 
   describe('CRUD Operations', () => {
-    beforeEach(async () => {
-      // Disconnect any existing clients
-      if (subscriptionClient1) subscriptionClient1.disconnect();
-    });
-
-    afterEach(() => {
-      if (subscriptionClient1) {
-        subscriptionClient1.disconnect();
-      }
-    });
-
     it('should set and get a value', async () => {
       const testKey = generateTestKey('set-get');
       const testValue = 'subscription-test-value';
@@ -126,15 +176,17 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
       // Set a value
-      const setResponse = await subscriptionClient1.set(testKey, testValue);
+      const setResponse = await subscriptionClient.set(testKey, testValue);
       expect(setResponse.code).toBe(200);
 
       // Get the value
-      const getResponse = await subscriptionClient1.get(testKey);
+      const getResponse = await subscriptionClient.get(testKey);
       expect(getResponse.code).toBe(200);
       expect(getResponse.value).toBe(testValue);
     });
@@ -151,19 +203,21 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
       // First ensure the key exists
-      await subscriptionClient1.set(testKey, testValue);
+      await subscriptionClient.set(testKey, testValue);
 
       // Delete the value
-      const deleteResponse = await subscriptionClient1.delete(testKey);
+      const deleteResponse = await subscriptionClient.delete(testKey);
       expect(deleteResponse.code).toBe(200);
 
       // Verify it's deleted - should throw an error
       try {
-        await subscriptionClient1.get(testKey);
+        await subscriptionClient.get(testKey);
         fail('Expected an error to be thrown when getting a deleted key');
       } catch (error) {
         expect(error).toBeDefined();
@@ -183,12 +237,14 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
       // Should be able to operate on testKey2 too because it matches the access pattern
-      await subscriptionClient1.set(testKey2, 'new-value');
-      const getResponse = await subscriptionClient1.get(testKey2);
+      await subscriptionClient.set(testKey2, 'new-value');
+      const getResponse = await subscriptionClient.get(testKey2);
       expect(getResponse.code).toBe(200);
       expect(getResponse.value).toBe('new-value');
     });
@@ -209,11 +265,13 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
       try {
-        await subscriptionClient1.set(restrictedKey, 'unauthorized-update');
+        await subscriptionClient.set(restrictedKey, 'unauthorized-update');
         fail('Expected operation to fail due to access pattern restriction');
       } catch (error) {
         expect(error).toBeDefined();
@@ -222,19 +280,6 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
   });
 
   describe('Subscription Features', () => {
-    beforeEach(async () => {
-      // Disconnect any existing clients
-      if (subscriptionClient1) subscriptionClient1.disconnect();
-      if (subscriptionClient2) subscriptionClient2.disconnect();
-      if (restrictedClient) restrictedClient.disconnect();
-    });
-
-    afterEach(() => {
-      subscriptionClient1?.disconnect();
-      subscriptionClient2?.disconnect();
-      restrictedClient?.disconnect();
-    });
-
     it('should receive notifications for subscribed keys', async () => {
       const testKey = generateTestKey('notification');
       await apiClient.set(testKey, 'initial-value');
@@ -245,14 +290,16 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
       // Store events received by the subscription
       const receivedEvents: HPKVResponse[] = [];
 
       // Subscribe to changes
-      subscriptionClient1.subscribe(event => {
+      subscriptionClient.subscribe(event => {
         receivedEvents.push(event);
       });
 
@@ -260,7 +307,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       await apiClient.set(testKey, 'updated-via-api');
 
       // Wait for the notification to be delivered
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => safeSetTimeout(resolve, 1000));
 
       // Check if we received the notification
       expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
@@ -281,13 +328,15 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
       const receivedEvents: HPKVResponse[] = [];
 
       // Subscribe to only one key
-      subscriptionClient1.subscribe(event => {
+      subscriptionClient.subscribe(event => {
         receivedEvents.push(event);
       });
 
@@ -295,7 +344,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       await apiClient.set(unsubscribedKey, 'updated-unsubscribed-key');
 
       // Wait for any potential notifications
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => safeSetTimeout(resolve, 1000));
 
       // We should not receive notifications for the unsubscribed key
       expect(receivedEvents.length).toBe(0);
@@ -316,8 +365,12 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token1, BASE_URL);
-      subscriptionClient2 = HPKVClientFactory.createSubscriptionClient(token2, BASE_URL);
+      const subscriptionClient1 = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token1, BASE_URL)
+      );
+      const subscriptionClient2 = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token2, BASE_URL)
+      );
 
       await subscriptionClient1.connect();
       await subscriptionClient2.connect();
@@ -338,7 +391,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       await apiClient.set(testKey, 'notify-multiple-clients');
 
       // Wait for notifications to be delivered
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => safeSetTimeout(resolve, 1000));
 
       // Both clients should receive the notification
       expect(eventsClient1.length).toBeGreaterThanOrEqual(1);
@@ -357,30 +410,32 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: `${TEST_KEY_PREFIX}*`,
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(token, BASE_URL);
-      await subscriptionClient1.connect();
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+      await subscriptionClient.connect();
 
       const receivedEvents: HPKVResponse[] = [];
 
       // Subscribe to changes
-      const callbackId = subscriptionClient1.subscribe(event => {
+      const callbackId = subscriptionClient.subscribe(event => {
         receivedEvents.push(event);
       });
 
       // Make a change to verify subscription is working
       await apiClient.set(testKey, 'before-unsubscribe');
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => safeSetTimeout(resolve, 1000));
 
       // Should have received the notification
       expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
 
       // Clear the events array and unsubscribe
       receivedEvents.length = 0;
-      subscriptionClient1.unsubscribe(callbackId);
+      subscriptionClient.unsubscribe(callbackId);
 
       // Make another change after unsubscribing
       await apiClient.set(testKey, 'after-unsubscribe');
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => safeSetTimeout(resolve, 1000));
 
       // Should not have received any notifications after unsubscribing
       expect(receivedEvents.length).toBe(0);
@@ -407,15 +462,19 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         accessPattern: 'restricted-key-*',
       });
 
-      subscriptionClient1 = HPKVClientFactory.createSubscriptionClient(regularToken, BASE_URL);
-      restrictedClient = HPKVClientFactory.createSubscriptionClient(restrictedToken, BASE_URL);
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(regularToken, BASE_URL)
+      );
+      const restrictedClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(restrictedToken, BASE_URL)
+      );
 
-      await subscriptionClient1.connect();
+      await subscriptionClient.connect();
       await restrictedClient.connect();
 
       try {
         // regularClient should not access restrictedKey
-        await subscriptionClient1.get(restrictedKey);
+        await subscriptionClient.get(restrictedKey);
         fail('Expected operation to fail due to access pattern restriction');
       } catch (error: unknown) {
         expect(error).toBeDefined();
@@ -432,6 +491,221 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         expect(error).toBeInstanceOf(Error);
         expect((error as Error).message).toBe('Access denied: Key does not match allowed pattern');
       }
+    });
+  });
+
+  describe('Event Handling', () => {
+    it('should emit connected event when connection is established', async () => {
+      const testKey = generateTestKey('event-connected');
+      await apiClient.set(testKey, 'initial-value');
+
+      const token = await tokenManager.generateToken({
+        subscribeKeys: [testKey],
+        accessPattern: `${TEST_KEY_PREFIX}*`,
+      });
+
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+
+      let connectedEventFired = false;
+
+      subscriptionClient.on('connected', () => {
+        connectedEventFired = true;
+      });
+
+      await subscriptionClient.connect();
+
+      expect(connectedEventFired).toBe(true);
+    });
+
+    it('should emit disconnected event when connection is closed', async () => {
+      const testKey = generateTestKey('event-disconnected');
+      await apiClient.set(testKey, 'initial-value');
+
+      const token = await tokenManager.generateToken({
+        subscribeKeys: [testKey],
+        accessPattern: `${TEST_KEY_PREFIX}*`,
+      });
+
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+
+      let disconnectedEventFired = false;
+
+      subscriptionClient.on('disconnected', () => {
+        disconnectedEventFired = true;
+      });
+
+      await subscriptionClient.connect();
+
+      // Give some time for connection to establish fully
+      await new Promise(resolve => safeSetTimeout(resolve, 100));
+
+      await subscriptionClient.disconnect(false);
+
+      // Disconnection may not be instant, allow more time for the event to fire
+      await new Promise(resolve => safeSetTimeout(resolve, 500));
+
+      expect(disconnectedEventFired).toBe(true);
+    });
+
+    it('should allow removing event listeners', async () => {
+      const testKey = generateTestKey('event-off');
+      await apiClient.set(testKey, 'initial-value');
+
+      const token = await tokenManager.generateToken({
+        subscribeKeys: [testKey],
+        accessPattern: `${TEST_KEY_PREFIX}*`,
+      });
+
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+
+      let eventCounter = 0;
+
+      const listener = (): void => {
+        eventCounter++;
+      };
+
+      // Add and then remove the listener
+      subscriptionClient.on('connected', listener);
+      subscriptionClient.off('connected', listener);
+
+      await subscriptionClient.connect();
+
+      expect(eventCounter).toBe(0);
+    });
+  });
+
+  describe('Request Queue and Reconnection', () => {
+    it('should automatically connect when sending a request', async () => {
+      const testKey = generateTestKey('auto-connect');
+      const testValue = 'auto-connect-value';
+
+      await apiClient.set(testKey, 'initial-value');
+
+      const token = await tokenManager.generateToken({
+        subscribeKeys: [testKey],
+        accessPattern: `${TEST_KEY_PREFIX}*`,
+      });
+
+      // Create client but don't connect
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+
+      // Verify not connected initially
+      expect(subscriptionClient.getConnectionStats().isConnected).toBe(false);
+
+      // This should automatically establish connection before sending
+      const response = await subscriptionClient.set(testKey, testValue);
+
+      // Verify it connected and operation succeeded
+      expect(subscriptionClient.getConnectionStats().isConnected).toBe(true);
+      expect(response.code).toBe(200);
+
+      // Verify value was set
+      const getResponse = await subscriptionClient.get(testKey);
+      expect(getResponse.value).toBe(testValue);
+    });
+
+    it('should reconnect and process queued messages after disconnection', async () => {
+      const testKey = generateTestKey('reconnect-queue');
+      await apiClient.set(testKey, 'initial-value');
+
+      const token = await tokenManager.generateToken({
+        subscribeKeys: [testKey],
+        accessPattern: `${TEST_KEY_PREFIX}*`,
+      });
+
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+
+      // Setup disconnection event tracking
+      let disconnectedFired = false;
+      let reconnectingFired = false;
+      let connectedAgainFired = false;
+
+      subscriptionClient.on('disconnected', () => {
+        disconnectedFired = true;
+      });
+
+      subscriptionClient.on('reconnecting', () => {
+        reconnectingFired = true;
+      });
+
+      subscriptionClient.on('connected', () => {
+        if (disconnectedFired) {
+          connectedAgainFired = true;
+        }
+      });
+
+      // Connect initially
+      await subscriptionClient.connect();
+
+      // Give some time for connection to establish fully
+      await new Promise(resolve => safeSetTimeout(resolve, 100));
+
+      // Force disconnect but do not cancel pending requests
+      await subscriptionClient.disconnect(false);
+
+      // Wait for disconnect to complete - increasing timeout
+      await new Promise(resolve => safeSetTimeout(resolve, 500));
+      expect(disconnectedFired).toBe(true);
+
+      // Send a message while disconnected - should reconnect automatically
+      const response = await subscriptionClient.set(testKey, 'reconnected-value');
+
+      // Verify reconnection events and successful operation
+      expect(reconnectingFired || connectedAgainFired).toBe(true);
+      expect(response.code).toBe(200);
+
+      // Get the value to confirm it was set correctly
+      const getResponse = await subscriptionClient.get(testKey);
+      expect(getResponse.value).toBe('reconnected-value');
+    });
+
+    it('should process multiple queued operations in order', async () => {
+      const testKey = generateTestKey('multiple-queue');
+      await apiClient.set(testKey, 'initial-value');
+
+      const token = await tokenManager.generateToken({
+        subscribeKeys: [testKey],
+        accessPattern: `${TEST_KEY_PREFIX}*`,
+      });
+
+      const subscriptionClient = trackClient(
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+      );
+
+      // Connect and then disconnect
+      await subscriptionClient.connect();
+      await subscriptionClient.disconnect(false);
+
+      // Wait for disconnect to complete
+      await new Promise(resolve => safeSetTimeout(resolve, 100));
+
+      // Queue multiple operations while disconnected
+      const setPromise1 = subscriptionClient.set(testKey, 'value-1');
+      const setPromise2 = subscriptionClient.set(testKey, 'value-2');
+      const setPromise3 = subscriptionClient.set(testKey, 'value-3');
+
+      // Wait for all operations to complete
+      await Promise.all([setPromise1, setPromise2, setPromise3]);
+
+      // The final value should be the last one set
+      const getResponse = await subscriptionClient.get(testKey);
+      expect(getResponse.value).toBe('value-3');
+
+      // All responses should have been successful
+      const responses = await Promise.all([setPromise1, setPromise2, setPromise3]);
+      responses.forEach(response => {
+        expect(response.code).toBe(200);
+      });
     });
   });
 });
