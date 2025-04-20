@@ -8,7 +8,7 @@ import {
   ConnectionConfig,
 } from '../types';
 import { ConnectionError, HPKVError, TimeoutError } from './errors';
-import { EventEmitter } from 'events';
+import SimpleEventEmitter from '../event-emitter';
 
 // Define a type that works for timeouts in both Node.js and browser environments
 type TimeoutHandle = NodeJS.Timeout | number;
@@ -157,7 +157,7 @@ export abstract class BaseWebSocketClient {
   protected operationTimeoutMs: number | null = null;
 
   protected cleanupInterval: TimeoutHandle | null = null;
-  protected emitter = new EventEmitter();
+  protected emitter = new SimpleEventEmitter();
   protected messageMap = new Map<number, PendingRequest>();
   protected requestQueue: Array<() => Promise<unknown>> = [];
 
