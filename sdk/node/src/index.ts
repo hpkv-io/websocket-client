@@ -5,3 +5,4 @@ export { HPKVSubscriptionClient } from './clients/subscription-client';
 export { WebsocketTokenManager } from './token-manager';
 export * from './clients/errors';
 export * from './types';
+export { default as SimpleEventEmitter } from './event-emitter';
