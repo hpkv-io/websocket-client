@@ -96,7 +96,11 @@ const WS_CONSTANTS = {
  * Creates a WebSocket instance that works in both Node.js and browser environments
  */
 function createWebSocket(url: string): IWebSocket {
-  if (typeof window !== 'undefined' && window.WebSocket) {
+  if (
+    (typeof window !== 'undefined' && window.WebSocket) ||
+    (typeof self !== 'undefined' && self.WebSocket) ||
+    (typeof global !== 'undefined' && global.WebSocket)
+  ) {
     return new BrowserWebSocketAdapter(url);
   }
   return new WebSocketNode(url) as unknown as IWebSocket;
