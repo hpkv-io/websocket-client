@@ -84,16 +84,20 @@ class BrowserWebSocketAdapter implements IWebSocket {
   }
 }
 
-// Constants to match WebSocket states across environments
+/**
+ * Constants to match WebSocket states across environments
+ */
 const WS_CONSTANTS = {
   CONNECTING: 0,
   OPEN: 1,
   CLOSING: 2,
   CLOSED: 3,
-};
+} as const;
 
 /**
  * Creates a WebSocket instance that works in both Node.js and browser environments
+ * @param url - The WebSocket URL to connect to
+ * @returns A WebSocket instance that implements the IWebSocket interface
  */
 function createWebSocket(url: string): IWebSocket {
   if (
@@ -103,7 +107,9 @@ function createWebSocket(url: string): IWebSocket {
   ) {
     return new BrowserWebSocketAdapter(url);
   }
-  return new WebSocketNode(url) as unknown as IWebSocket;
+
+  const ws = new WebSocketNode(url);
+  return ws as IWebSocket;
 }
 
 /**
@@ -131,9 +137,16 @@ interface PendingRequest {
  * Configuration for the exponential backoff retry strategy
  */
 interface RetryConfig {
+  /** Maximum number of reconnection attempts */
   maxAttempts: number;
+
+  /** Initial delay between reconnection attempts in milliseconds */
   initialDelayMs: number;
+
+  /** Maximum delay between reconnection attempts in milliseconds */
   maxDelayMs: number;
+
+  /** Random jitter in milliseconds to add to reconnection delay */
   jitterMs?: number;
 }
 
@@ -141,7 +154,7 @@ interface RetryConfig {
  * Default timeout values in milliseconds
  */
 const DEFAULT_TIMEOUTS = {
-  CONNECTION: 30000, // 10 seconds for connection
+  CONNECTION: 30000, // 30 seconds for connection
   OPERATION: 10000, // 10 seconds for operations
   CLEANUP: 60000, // 60 seconds for stale request cleanup
 } as const;
@@ -153,6 +166,8 @@ const DEFAULT_TIMEOUTS = {
 export abstract class BaseWebSocketClient {
   protected ws: IWebSocket | null = null;
   protected baseUrl: string;
+
+  // Use a safe message ID counter that wraps around when it reaches MAX_SAFE_INTEGER
   protected messageId = 0;
   protected connectionPromise: Promise<void> | null = null;
   protected connectionState: ConnectionState = ConnectionState.DISCONNECTED;
@@ -163,7 +178,6 @@ export abstract class BaseWebSocketClient {
   protected cleanupInterval: TimeoutHandle | null = null;
   protected emitter = new SimpleEventEmitter();
   protected messageMap = new Map<number, PendingRequest>();
-  protected requestQueue: Array<() => Promise<unknown>> = [];
 
   // Retry configuration
   protected retry: RetryConfig;
@@ -174,7 +188,7 @@ export abstract class BaseWebSocketClient {
   /**
    * Creates a new BaseWebSocketClient instance
    * @param baseUrl - The base URL of the HPKV API
-   * @param config - The connection configuration
+   * @param config - The connection configuration including timeouts and retry options
    */
   constructor(baseUrl: string, config?: ConnectionConfig) {
     this.baseUrl = baseUrl.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
@@ -188,7 +202,28 @@ export abstract class BaseWebSocketClient {
     };
 
     // Setup automatic cleanup of stale requests
+    this.initCleanupInterval();
+  }
+
+  /**
+   * Initializes the cleanup interval for stale requests
+   */
+  private initCleanupInterval(): void {
+    // Clear any existing interval first
+    this.clearCleanupInterval();
+
+    // Set up a new cleanup interval
     this.cleanupInterval = setInterval(() => this.cleanupStaleRequests(), this.timeouts.CLEANUP);
+  }
+
+  /**
+   * Clears the cleanup interval
+   */
+  private clearCleanupInterval(): void {
+    if (this.cleanupInterval !== null) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
   }
 
   /**
@@ -199,9 +234,11 @@ export abstract class BaseWebSocketClient {
 
   /**
    * Register event listeners
+   * @param event - The event to listen for
+   * @param listener - The callback function to execute when the event is emitted
    */
   on(
-    event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed',
+    event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed' | 'error',
     listener: (...args: any[]) => void
   ): void {
     this.emitter.on(event, listener);
@@ -209,9 +246,11 @@ export abstract class BaseWebSocketClient {
 
   /**
    * Remove event listeners
+   * @param event - The event to stop listening for
+   * @param listener - The callback function to remove
    */
   off(
-    event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed',
+    event: 'connected' | 'disconnected' | 'reconnecting' | 'reconnectFailed' | 'error',
     listener: (...args: any[]) => void
   ): void {
     this.emitter.off(event, listener);
@@ -220,7 +259,7 @@ export abstract class BaseWebSocketClient {
   /**
    * Retrieves a value from the key-value store
    * @param key - The key to retrieve
-   * @param timeoutMs - Optional custom timeout for this operation
+   * @param timeoutMs - Optional custom timeout for this operation in milliseconds
    * @returns A promise that resolves with the API response
    * @throws Error if the key is not found or connection fails
    */
@@ -239,7 +278,7 @@ export abstract class BaseWebSocketClient {
    * @param key - The key to store the value under
    * @param value - The value to store (will be stringified if not a string)
    * @param partialUpdate - If true, performs a partial update/patch instead of replacing the entire value
-   * @param timeoutMs - Optional custom timeout for this operation
+   * @param timeoutMs - Optional custom timeout for this operation in milliseconds
    * @returns A promise that resolves with the API response
    * @throws Error if the operation fails or connection is lost
    */
@@ -264,7 +303,7 @@ export abstract class BaseWebSocketClient {
   /**
    * Deletes a value from the key-value store
    * @param key - The key to delete
-   * @param timeoutMs - Optional custom timeout for this operation
+   * @param timeoutMs - Optional custom timeout for this operation in milliseconds
    * @returns A promise that resolves with the API response
    * @throws Error if the key is not found or connection fails
    */
@@ -282,8 +321,8 @@ export abstract class BaseWebSocketClient {
    * Performs a range query to retrieve multiple keys within a specified range
    * @param key - The start key of the range
    * @param endKey - The end key of the range
-   * @param options - Additional options for the range query
-   * @param timeoutMs - Optional custom timeout for this operation
+   * @param options - Additional options for the range query including result limit
+   * @param timeoutMs - Optional custom timeout for this operation in milliseconds
    * @returns A promise that resolves with the API response containing matching records
    * @throws Error if the operation fails or connection is lost
    */
@@ -308,7 +347,7 @@ export abstract class BaseWebSocketClient {
    * Performs an atomic increment operation on a numeric value
    * @param key - The key of the value to increment
    * @param value - The amount to increment by
-   * @param timeoutMs - Optional custom timeout for this operation
+   * @param timeoutMs - Optional custom timeout for this operation in milliseconds
    * @returns A promise that resolves with the API response
    * @throws Error if the key does not contain a numeric value or connection fails
    */
@@ -324,16 +363,50 @@ export abstract class BaseWebSocketClient {
   }
 
   /**
+   * Checks if the WebSocket connection is currently established and open
+   * @returns True if the connection is established and ready
+   */
+  private isWebSocketOpen(): boolean {
+    return this.ws !== null && this.ws.readyState === WS_CONSTANTS.OPEN;
+  }
+
+  /**
+   * Updates the connection state based on WebSocket readyState
+   * to ensure consistency between the two state tracking mechanisms
+   */
+  private syncConnectionState(): void {
+    if (!this.ws) {
+      this.connectionState = ConnectionState.DISCONNECTED;
+      return;
+    }
+
+    switch (this.ws.readyState) {
+      case WS_CONSTANTS.CONNECTING:
+        this.connectionState = ConnectionState.CONNECTING;
+        break;
+      case WS_CONSTANTS.OPEN:
+        this.connectionState = ConnectionState.CONNECTED;
+        break;
+      case WS_CONSTANTS.CLOSING:
+        this.connectionState = ConnectionState.DISCONNECTING;
+        break;
+      case WS_CONSTANTS.CLOSED:
+        this.connectionState = ConnectionState.DISCONNECTED;
+        break;
+    }
+  }
+
+  /**
    * Establishes a WebSocket connection to the HPKV API
    * @returns A promise that resolves when the connection is established
    * @throws ConnectionError if the connection fails or times out
    */
   async connect(): Promise<void> {
+    // Sync connection state first
+    this.syncConnectionState();
+
     // If already connected, resolve immediately
-    if (
-      this.connectionState === ConnectionState.CONNECTED &&
-      this.ws?.readyState === WS_CONSTANTS.OPEN
-    ) {
+    if (this.connectionState === ConnectionState.CONNECTED && this.isWebSocketOpen()) {
       return;
     }
 
@@ -367,7 +440,6 @@ export abstract class BaseWebSocketClient {
           }
 
           this.reconnectAttempts = 0;
-          this.processRequestQueue();
           resolve();
         });
 
@@ -393,9 +465,9 @@ export abstract class BaseWebSocketClient {
               clearTimeout(this.connectionTimeout);
               this.connectionTimeout = null;
             }
-
             this.connectionState = ConnectionState.DISCONNECTED;
             reject(new ConnectionError(error.message));
+            this.emitter.emit('error', error);
           }
         });
       } catch (error) {
@@ -414,6 +486,9 @@ export abstract class BaseWebSocketClient {
    * @returns A promise that resolves when the connection is closed
    */
   async disconnect(cancelPendingRequests = true): Promise<void> {
+    // Sync connection state first
+    this.syncConnectionState();
+
     if (this.connectionState === ConnectionState.DISCONNECTED) {
       return;
     }
@@ -447,21 +522,27 @@ export abstract class BaseWebSocketClient {
 
   /**
    * Get the current connection state
+   * @returns The current connection state
    */
   getConnectionState(): ConnectionState {
+    // Sync connection state before returning
+    this.syncConnectionState();
     return this.connectionState;
   }
 
   /**
    * Get current connection statistics
+   * @returns Statistics about the current connection
    */
   getConnectionStats(): ConnectionStats {
+    // Sync connection state first
+    this.syncConnectionState();
+
     return {
       isConnected: this.connectionState === ConnectionState.CONNECTED,
       reconnectAttempts: this.reconnectAttempts,
       messagesPending: this.messageMap.size,
       connectionState: this.connectionState,
-      queueSize: this.requestQueue.length,
     } as ConnectionStats;
   }
 
@@ -471,6 +552,9 @@ export abstract class BaseWebSocketClient {
    * @throws ConnectionError if reconnection fails after max attempts
    */
   protected async reconnect(): Promise<void> {
+    // Sync connection state first
+    this.syncConnectionState();
+
     if (
       this.connectionState === ConnectionState.DISCONNECTING ||
       this.connectionState === ConnectionState.CONNECTING
@@ -551,18 +635,13 @@ export abstract class BaseWebSocketClient {
   destroy(): void {
     this.cancelAllRequests(new ConnectionError('Client destroyed'));
     this.cleanup();
-
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
-
+    this.clearCleanupInterval();
     this.emitter.removeAllListeners();
-    this.requestQueue = [];
   }
 
   /**
    * Cancel all pending requests with the given error
+   * @param error - The error to reject pending requests with
    */
   protected cancelAllRequests(error: Error): void {
     // Reject all pending messages
@@ -595,6 +674,8 @@ export abstract class BaseWebSocketClient {
 
   /**
    * Handles disconnect events and attempts to reconnect
+   * @param code - The close code from the WebSocket
+   * @param reason - The close reason from the WebSocket
    */
   protected handleDisconnect(code?: number, reason?: string): void {
     if (this.connectionState === ConnectionState.DISCONNECTING) {
@@ -603,7 +684,14 @@ export abstract class BaseWebSocketClient {
     }
 
     if (this.reconnectAttempts < this.retry.maxAttempts) {
-      this.reconnect().catch(() => {});
+      this.reconnect().catch(error => {
+        this.emitter.emit(
+          'error',
+          new ConnectionError(
+            `Reconnection failed: ${error instanceof Error ? error.message : String(error)}`
+          )
+        );
+      });
     } else {
       // Max reconnect attempts reached
       const connectionError = new ConnectionError(
@@ -620,12 +708,10 @@ export abstract class BaseWebSocketClient {
    * @param message - The message received from the WebSocket server
    */
   protected handleMessage(message: HPKVResponse): void {
-    // Skip notification messages or messages without proper structure
-    if (message.type !== undefined || message.messageId === undefined) {
+    const messageId = message.messageId;
+    if (!messageId) {
       return;
     }
-
-    const messageId = message.messageId;
     const pendingRequest = this.messageMap.get(messageId);
 
     if (!pendingRequest) {
@@ -650,9 +736,21 @@ export abstract class BaseWebSocketClient {
   }
 
   /**
+   * Gets the next message ID, ensuring it doesn't overflow
+   * @returns A safe message ID number
+   */
+  private getNextMessageId(): number {
+    // Reset messageId if it approaches MAX_SAFE_INTEGER to prevent overflow
+    if (this.messageId >= Number.MAX_SAFE_INTEGER - 1000) {
+      this.messageId = 0;
+    }
+    return ++this.messageId;
+  }
+
+  /**
    * Sends a message to the WebSocket server and handles the response
    * @param message - The message to send
-   * @param timeoutMs - Optional custom timeout for this operation
+   * @param timeoutMs - Optional custom timeout for this operation in milliseconds
    * @returns A promise that resolves with the server response
    * @throws Error if the message times out or connection fails
    */
@@ -660,48 +758,16 @@ export abstract class BaseWebSocketClient {
     message: Omit<HPKVRequestMessage, 'messageId'>,
     timeoutMs?: number
   ): Promise<HPKVResponse> {
-    // If not connected and not currently connecting, trigger connect
-    if (this.connectionState === ConnectionState.DISCONNECTED) {
-      try {
-        await this.connect();
-      } catch (error) {
-        return this.queueRequest(() => this.sendMessageInternal(message, timeoutMs));
-      }
-    }
-
-    // If currently connecting, queue the request
-    if (this.connectionState === ConnectionState.CONNECTING) {
-      return this.queueRequest(() => this.sendMessageInternal(message, timeoutMs));
-    }
-
-    // Otherwise, send immediately
-    return this.sendMessageInternal(message, timeoutMs);
-  }
-
-  /**
-   * Internal implementation of message sending
-   */
-  private async sendMessageInternal(
-    message: Omit<HPKVRequestMessage, 'messageId'>,
-    timeoutMs?: number
-  ): Promise<HPKVResponse> {
-    // Ensure we're connected before proceeding
-    if (
-      this.connectionState !== ConnectionState.CONNECTED ||
-      !this.ws ||
-      this.ws.readyState !== WS_CONSTANTS.OPEN
-    ) {
-      try {
-        await this.connect();
-      } catch (error) {
-        throw new ConnectionError(
-          `Failed to connect: ${error instanceof Error ? error.message : 'Unknown error'}`
-        );
-      }
-    }
-
     return new Promise((resolve, reject) => {
-      const id = ++this.messageId;
+      // Sync connection state first
+      this.syncConnectionState();
+
+      if (this.connectionState !== ConnectionState.CONNECTED) {
+        reject(new ConnectionError('Client is not connected'));
+        return;
+      }
+
+      const id = this.getNextMessageId();
       const messageWithId: HPKVRequestMessage = {
         ...message,
         messageId: id,
@@ -728,7 +794,13 @@ export abstract class BaseWebSocketClient {
       });
 
       try {
-        this.ws?.send(JSON.stringify(messageWithId));
+        if (this.ws && this.isWebSocketOpen()) {
+          this.ws.send(JSON.stringify(messageWithId));
+        } else {
+          clearTimeout(timer);
+          this.messageMap.delete(id);
+          reject(new ConnectionError('WebSocket is not open'));
+        }
       } catch (error) {
         clearTimeout(timer);
         this.messageMap.delete(id);
@@ -738,50 +810,6 @@ export abstract class BaseWebSocketClient {
           )
         );
       }
-    });
-  }
-
-  /**
-   * Processes the queued requests
-   */
-  private async processRequestQueue(): Promise<void> {
-    // Make a copy to avoid issues if new requests are added during processing
-    const queue = [...this.requestQueue];
-    this.requestQueue = [];
-
-    // Process each request serially to avoid overwhelming the connection
-    for (const request of queue) {
-      try {
-        await request();
-      } catch (error) {
-        this.emitter.emit(
-          'error',
-          new Error(
-            `Failed to process queued request: ${error instanceof Error ? error.message : 'Unknown error'}`
-          )
-        );
-      }
-
-      // Small delay between requests to avoid flooding
-      if (queue.length > 5) {
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
-    }
-  }
-
-  /**
-   * Queue a request when connection is not available
-   */
-  private queueRequest<T>(request: () => Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      this.requestQueue.push(async () => {
-        try {
-          const result = await request();
-          resolve(result);
-        } catch (error) {
-          reject(error);
-        }
-      });
     });
   }
 }
