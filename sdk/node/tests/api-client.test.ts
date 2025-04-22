@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { HPKVClientFactory } from '../src';
+import { ConnectionError, HPKVClientFactory, HPKVError } from '../src';
 import { HPKVApiClient } from '../src/clients/api-client';
 import dotenv from 'dotenv';
 
@@ -71,10 +71,18 @@ describe('HPKVApiClient Integration Tests', () => {
   });
 
   describe('CRUD Operations', () => {
+    let client: HPKVApiClient;
+    beforeAll(async () => {
+      client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+      await client.connect();
+    });
+    afterAll(async () => {
+      await client.disconnect();
+      client.destroy();
+    });
     it('should set and get a value', async () => {
       const testKey = generateTestKey('set-get');
       const testValue = 'set-get-test-value';
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       // Set a value
       const setResponse = await client.set(testKey, testValue);
       expect(setResponse.success).toBe(true);
@@ -84,14 +92,11 @@ describe('HPKVApiClient Integration Tests', () => {
       const getResponse = await client.get(testKey);
       expect(getResponse.code).toBe(200);
       expect(getResponse.value).toBe(testValue);
-      await client.disconnect();
-      client.destroy();
     });
 
     it('should delete a value', async () => {
       const testKey = generateTestKey('delete');
       const testValue = 'delete-test-value';
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       // First ensure the key exists
       await client.set(testKey, testValue);
 
@@ -105,17 +110,14 @@ describe('HPKVApiClient Integration Tests', () => {
         await client.get(testKey);
         fail('Expected an error to be thrown when getting a deleted key');
       } catch (error) {
-        expect(error).toBeDefined();
+        expect((error as HPKVError).code).toBe(404);
       }
-      await client.disconnect();
-      client.destroy();
     });
 
     it('should patch a value', async () => {
       const testKey = generateTestKey('patch');
       const initialValue = { name: 'test', value: 123 };
       const patchValue = { value: 456 };
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       // Set initial value
       await client.set(testKey, initialValue);
 
@@ -127,14 +129,12 @@ describe('HPKVApiClient Integration Tests', () => {
       // Verify the patched value
       const getResponse = await client.get(testKey);
       expect(getResponse.code).toBe(200);
+      expect(JSON.parse(getResponse.value as string).name).toBe('test');
       expect(JSON.parse(getResponse.value as string).value).toBe(456);
-      await client.disconnect();
-      client.destroy();
     });
 
     it('should perform range queries', async () => {
       const keyPrefix = generateTestKey('range');
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       // Set multiple values with sequential keys
       await client.set(`${keyPrefix}-1`, 'value1');
       await client.set(`${keyPrefix}-2`, 'value2');
@@ -149,13 +149,10 @@ describe('HPKVApiClient Integration Tests', () => {
       expect(rangeResponse.code).toBe(200);
       expect(Array.isArray(rangeResponse.records)).toBe(true);
       expect(rangeResponse.records?.length).toBe(3);
-      await client.disconnect();
-      client.destroy();
     });
 
     it('should limit range query results when limit is provided', async () => {
       const keyPrefix = generateTestKey('range-limit');
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       // Set multiple values with sequential keys
       await client.set(`${keyPrefix}-1`, 'value1');
       await client.set(`${keyPrefix}-2`, 'value2');
@@ -170,13 +167,10 @@ describe('HPKVApiClient Integration Tests', () => {
       expect(rangeResponse.code).toBe(200);
       expect(Array.isArray(rangeResponse.records)).toBe(true);
       expect(rangeResponse.records?.length).toBe(2);
-      await client.disconnect();
-      client.destroy();
     });
 
     it('should perform atomic increment', async () => {
       const counterKey = generateTestKey('atomic-increment');
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       await client.set(counterKey, '0');
 
       const incrementResponse = await client.atomicIncrement(counterKey, 1);
@@ -185,38 +179,73 @@ describe('HPKVApiClient Integration Tests', () => {
       const getResponse = await client.get(counterKey);
       expect(getResponse.code).toBe(200);
       expect(parseInt(getResponse.value as string)).toBe(1);
-      await client.disconnect();
-      client.destroy();
     });
   });
 
   describe('Error Handling', () => {
-    it('should throw error when getting non-existent keys', async () => {
+    let client: HPKVApiClient;
+    beforeAll(async () => {
+      client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+      await client.connect();
+    });
+    afterAll(async () => {
+      await client.disconnect();
+      client.destroy();
+    });
+    it('should throw not found error when getting non-existent keys', async () => {
       const nonExistentKey = generateTestKey('non-existent');
-      // Don't set this key, just try to get it
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       try {
         await client.get(nonExistentKey);
         fail('Expected an error to be thrown when getting a non-existent key');
       } catch (error) {
-        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(HPKVError);
+        expect((error as HPKVError).code).toBe(404);
       }
-      await client.disconnect();
-      client.destroy();
     });
 
-    it('should handle malformed API requests', async () => {
-      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+    it('should throw not founderror when deleting non-existent keys', async () => {
+      const nonExistentKey = generateTestKey('non-existent');
+      try {
+        await client.delete(nonExistentKey);
+        fail('Expected an error to be thrown when deleting a non-existent key');
+      } catch (error) {
+        expect(error).toBeInstanceOf(HPKVError);
+        expect((error as HPKVError).code).toBe(404);
+      }
+    });
+
+    it('should throw 400 error when using empty key', async () => {
       try {
         // Attempt to use invalid key format
-
         await client.set('', 'value');
         fail('Expected an error but none was thrown');
       } catch (error) {
-        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(HPKVError);
+        expect((error as HPKVError).code).toBe(400);
       }
-      await client.disconnect();
-      client.destroy();
+    });
+    it('should throw 400 error when using empty value', async () => {
+      try {
+        const testKey = generateTestKey('empty-value');
+        // Attempt to use invalid key format
+        await client.set(testKey, '');
+        fail('Expected an error but none was thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(HPKVError);
+        expect((error as HPKVError).code).toBe(400);
+      }
+    });
+    it('should throw connection error when client is not connected', async () => {
+      const disconnectedClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+      const testKey = generateTestKey('connection-error');
+      try {
+        await disconnectedClient.set(testKey, 'value');
+        fail('Expected an error but none was thrown');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ConnectionError);
+      } finally {
+        disconnectedClient.destroy();
+      }
     });
   });
 });
