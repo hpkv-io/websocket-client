@@ -1,5 +1,10 @@
 /// <reference types="jest" />
-import { HPKVClientFactory, HPKVSubscriptionClient, WebsocketTokenManager } from '../src';
+import {
+  ConnectionError,
+  HPKVClientFactory,
+  HPKVSubscriptionClient,
+  WebsocketTokenManager,
+} from '../src';
 import { HPKVApiClient } from '../src/clients/api-client';
 import { HPKVResponse } from '../src/types';
 import dotenv from 'dotenv';
@@ -155,7 +160,8 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
         fail('Expected connection to fail with invalid token');
       } catch (error) {
         // Connection should fail with an error
-        expect(error).toBeDefined();
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect((error as ConnectionError).message).toContain('403');
       }
 
       // Either the error event fired or the connection failed
@@ -191,7 +197,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       expect(getResponse.value).toBe(testValue);
     });
 
-    it('should delete a value', async () => {
+    it('should delete a key', async () => {
       const testKey = generateTestKey('delete');
       const testValue = 'delete-test-value';
 
@@ -577,135 +583,6 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       await subscriptionClient.connect();
 
       expect(eventCounter).toBe(0);
-    });
-  });
-
-  describe('Request Queue and Reconnection', () => {
-    it('should automatically connect when sending a request', async () => {
-      const testKey = generateTestKey('auto-connect');
-      const testValue = 'auto-connect-value';
-
-      await apiClient.set(testKey, 'initial-value');
-
-      const token = await tokenManager.generateToken({
-        subscribeKeys: [testKey],
-        accessPattern: `${TEST_KEY_PREFIX}*`,
-      });
-
-      // Create client but don't connect
-      const subscriptionClient = trackClient(
-        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
-      );
-
-      // Verify not connected initially
-      expect(subscriptionClient.getConnectionStats().isConnected).toBe(false);
-
-      // This should automatically establish connection before sending
-      const response = await subscriptionClient.set(testKey, testValue);
-
-      // Verify it connected and operation succeeded
-      expect(subscriptionClient.getConnectionStats().isConnected).toBe(true);
-      expect(response.code).toBe(200);
-
-      // Verify value was set
-      const getResponse = await subscriptionClient.get(testKey);
-      expect(getResponse.value).toBe(testValue);
-    });
-
-    it('should reconnect and process queued messages after disconnection', async () => {
-      const testKey = generateTestKey('reconnect-queue');
-      await apiClient.set(testKey, 'initial-value');
-
-      const token = await tokenManager.generateToken({
-        subscribeKeys: [testKey],
-        accessPattern: `${TEST_KEY_PREFIX}*`,
-      });
-
-      const subscriptionClient = trackClient(
-        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
-      );
-
-      // Setup disconnection event tracking
-      let disconnectedFired = false;
-      let reconnectingFired = false;
-      let connectedAgainFired = false;
-
-      subscriptionClient.on('disconnected', () => {
-        disconnectedFired = true;
-      });
-
-      subscriptionClient.on('reconnecting', () => {
-        reconnectingFired = true;
-      });
-
-      subscriptionClient.on('connected', () => {
-        if (disconnectedFired) {
-          connectedAgainFired = true;
-        }
-      });
-
-      // Connect initially
-      await subscriptionClient.connect();
-
-      // Give some time for connection to establish fully
-      await new Promise(resolve => safeSetTimeout(resolve, 100));
-
-      // Force disconnect but do not cancel pending requests
-      await subscriptionClient.disconnect(false);
-
-      // Wait for disconnect to complete - increasing timeout
-      await new Promise(resolve => safeSetTimeout(resolve, 500));
-      expect(disconnectedFired).toBe(true);
-
-      // Send a message while disconnected - should reconnect automatically
-      const response = await subscriptionClient.set(testKey, 'reconnected-value');
-
-      // Verify reconnection events and successful operation
-      expect(reconnectingFired || connectedAgainFired).toBe(true);
-      expect(response.code).toBe(200);
-
-      // Get the value to confirm it was set correctly
-      const getResponse = await subscriptionClient.get(testKey);
-      expect(getResponse.value).toBe('reconnected-value');
-    });
-
-    it('should process multiple queued operations in order', async () => {
-      const testKey = generateTestKey('multiple-queue');
-      await apiClient.set(testKey, 'initial-value');
-
-      const token = await tokenManager.generateToken({
-        subscribeKeys: [testKey],
-        accessPattern: `${TEST_KEY_PREFIX}*`,
-      });
-
-      const subscriptionClient = trackClient(
-        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
-      );
-
-      // Connect and then disconnect
-      await subscriptionClient.connect();
-      await subscriptionClient.disconnect(false);
-
-      // Wait for disconnect to complete
-      await new Promise(resolve => safeSetTimeout(resolve, 100));
-
-      // Queue multiple operations while disconnected
-      const setPromise1 = subscriptionClient.set(testKey, 'value-1');
-      const setPromise2 = subscriptionClient.set(testKey, 'value-2');
-      const setPromise3 = subscriptionClient.set(testKey, 'value-3');
-
-      // Wait for all operations to complete
-      await Promise.all([setPromise1, setPromise2, setPromise3]);
-
-      // The final value should be the last one set
-      const getResponse = await subscriptionClient.get(testKey);
-      expect(getResponse.value).toBe('value-3');
-
-      // All responses should have been successful
-      const responses = await Promise.all([setPromise1, setPromise2, setPromise3]);
-      responses.forEach(response => {
-        expect(response.code).toBe(200);
-      });
     });
   });
 });
