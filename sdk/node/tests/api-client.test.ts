@@ -51,9 +51,7 @@ describe('HPKVApiClient Integration Tests', () => {
       console.error('Error during test cleanup:', error);
     } finally {
       await apiClient.disconnect();
-      if (typeof apiClient.destroy === 'function') {
-        apiClient.destroy();
-      }
+      apiClient.destroy();
     }
   });
 
