@@ -1,6 +1,12 @@
-import { AuthenticationError, HPKVError } from './clients/errors';
-import { HPKVTokenConfig } from './types';
+import { AuthenticationError, HPKVError } from '../websocket/errors';
+import { HPKVTokenConfig } from '../websocket';
 
+/**
+ * WebsocketTokenManager
+ *
+ * Manages authentication tokens for WebSocket connections.
+ * Handles token generation and API authentication.
+ */
 export class WebsocketTokenManager {
   private apiKey: string;
   private baseUrl: string;
@@ -18,6 +24,14 @@ export class WebsocketTokenManager {
     this.baseUrl = baseUrl.replace(/^wss?:\/\//, 'https://').replace(/\/ws$/, '');
   }
 
+  /**
+   * Generates an authentication token for WebSocket connections
+   *
+   * @param config - Configuration for the token including subscribed keys and permissions
+   * @returns A Promise that resolves to the generated token string
+   * @throws {AuthenticationError} If authentication fails
+   * @throws {HPKVError} If token generation fails for other reasons
+   */
   async generateToken(config: HPKVTokenConfig): Promise<string> {
     const response = await fetch(`${this.baseUrl}/token/websocket`, {
       method: 'POST',

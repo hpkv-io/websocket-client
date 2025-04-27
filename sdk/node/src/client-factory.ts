@@ -1,6 +1,6 @@
 import { HPKVApiClient } from './clients/api-client';
 import { HPKVSubscriptionClient } from './clients/subscription-client';
-import { ConnectionConfig } from './types';
+import { ConnectionConfig } from './websocket';
 
 export class HPKVClientFactory {
   /**
