@@ -565,8 +565,8 @@ export abstract class BaseWebSocketClient {
    * Clean up resources when instance is no longer needed
    */
   destroy(): void {
-    this.messageHandler.cancelAllRequests(new ConnectionError('Client destroyed'));
     this.throttlingManager.destroy();
+    this.messageHandler.cancelAllRequests(new ConnectionError('Client destroyed'));
     this.cleanup();
     this.messageHandler.destroy();
     this.emitter.removeAllListeners();

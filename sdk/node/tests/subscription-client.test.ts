@@ -69,13 +69,9 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
           if (client.getConnectionStats().isConnected) {
             await client.disconnect(false);
           }
-
-          // Then destroy to clean up all resources
-          if (typeof client.destroy === 'function') {
-            client.destroy();
-          }
+          client.destroy();
         } catch (error) {
-          // Ignore errors during cleanup
+          console.error('Error during cleanup:', error);
         }
       })
     );
