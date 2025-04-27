@@ -21,7 +21,12 @@ describe('HPKVApiClient Integration Tests', () => {
   }
 
   beforeAll(() => {
-    apiClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+    apiClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
+      throttling: {
+        enabled: true,
+        rateLimit: 10,
+      },
+    });
   });
 
   afterAll(async () => {
@@ -245,6 +250,129 @@ describe('HPKVApiClient Integration Tests', () => {
         expect(error).toBeInstanceOf(ConnectionError);
       } finally {
         disconnectedClient.destroy();
+      }
+    });
+  });
+
+  describe('Throttling', () => {
+    it('should respect rate limits when throttling is enabled', async () => {
+      // Create a client with a low rate limit for testing
+      const rateLimit = 3; // 3 requests per second
+      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
+        throttling: {
+          enabled: true,
+          rateLimit,
+        },
+      });
+
+      try {
+        await client.connect();
+
+        const testKey = generateTestKey('throttle-test');
+        const testValue = 'throttle-test-value';
+
+        // Set up an array to track request completion times
+        const completionTimes: number[] = [];
+
+        // Make multiple requests in quick succession
+        const requestCount = 10;
+        const operations = Array(requestCount)
+          .fill(null)
+          .map((_, index) => {
+            return async () => {
+              // Alternate between set and get operations
+              if (index % 2 === 0) {
+                await client.set(`${testKey}-${index}`, `${testValue}-${index}`);
+                keysToCleanup.push(`${testKey}-${index}`);
+              } else {
+                try {
+                  await client.get(`${testKey}-${index - 1}`);
+                } catch (error) {
+                  // Ignore not found errors, we're just testing throttling
+                }
+              }
+              completionTimes.push(Date.now());
+            };
+          });
+
+        // Execute all operations
+        await Promise.all(operations.map(op => op()));
+
+        // Calculate time differences between consecutive requests
+        const timeDifferences: number[] = [];
+        for (let i = 1; i < completionTimes.length; i++) {
+          timeDifferences.push(completionTimes[i] - completionTimes[i - 1]);
+        }
+
+        // Calculate requests per second
+        const totalTimeMs = completionTimes[completionTimes.length - 1] - completionTimes[0];
+        const totalTimeSeconds = totalTimeMs / 1000;
+        const requestsPerSecond = (requestCount - 1) / totalTimeSeconds;
+
+        // The requests per second should not exceed the rate limit
+        // Add some margin for timing variations
+        expect(requestsPerSecond).toBeLessThanOrEqual(rateLimit * 1.1);
+
+        // If throttling is working, we expect to see some minimal spacing between requests
+        // Check that not all requests happened instantly
+        const hasThrottledRequests = timeDifferences.some(diff => diff > 50); // At least some requests should have a gap
+        expect(hasThrottledRequests).toBe(true);
+      } finally {
+        await client.disconnect();
+        client.destroy();
+      }
+    });
+
+    it('should not throttle when throttling is disabled', async () => {
+      // Create a client with throttling disabled
+      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
+        throttling: {
+          enabled: false,
+          rateLimit: 10,
+        },
+      });
+
+      try {
+        await client.connect();
+
+        const testKey = generateTestKey('no-throttle-test');
+        const testValue = 'no-throttle-test-value';
+
+        // Set up an array to track request start and completion times
+        const startTimes: number[] = [];
+        const completionTimes: number[] = [];
+
+        // Make several requests in quick succession
+        const requestCount = 5;
+        const operations = Array(requestCount)
+          .fill(null)
+          .map((_, index) => {
+            return async () => {
+              startTimes.push(Date.now());
+              await client.set(`${testKey}-${index}`, `${testValue}-${index}`);
+              completionTimes.push(Date.now());
+              keysToCleanup.push(`${testKey}-${index}`);
+            };
+          });
+
+        // Execute all operations
+        await Promise.all(operations.map(op => op()));
+
+        // Calculate time differences between consecutive request starts
+        const timeDifferences: number[] = [];
+        for (let i = 1; i < startTimes.length; i++) {
+          timeDifferences.push(startTimes[i] - startTimes[i - 1]);
+        }
+
+        // With throttling disabled, requests should start very close to each other
+        // Check that most requests started with minimal delay
+        const quickStartRequests = timeDifferences.filter(diff => diff < 20).length;
+        const duration = completionTimes[completionTimes.length - 1] - startTimes[0];
+        expect(quickStartRequests).toBeGreaterThan(requestCount / 2);
+        expect(duration).toBeLessThan(1000);
+      } finally {
+        await client.disconnect();
+        client.destroy();
       }
     });
   });

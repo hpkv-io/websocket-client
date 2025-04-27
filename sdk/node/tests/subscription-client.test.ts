@@ -6,7 +6,7 @@ import {
   WebsocketTokenManager,
 } from '../src';
 import { HPKVApiClient } from '../src/clients/api-client';
-import { HPKVResponse } from '../src/types';
+import { HPKVNotificationResponse, HPKVResponse } from '../src/websocket';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -43,7 +43,12 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
   }
 
   beforeAll(async () => {
-    apiClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+    apiClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
+      throttling: {
+        enabled: true,
+        rateLimit: 10,
+      },
+    });
     tokenManager = new WebsocketTokenManager(API_KEY, BASE_URL);
     await apiClient.connect();
   });
@@ -297,12 +302,17 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       });
 
       const subscriptionClient = trackClient(
-        HPKVClientFactory.createSubscriptionClient(token, BASE_URL)
+        HPKVClientFactory.createSubscriptionClient(token, BASE_URL, {
+          throttling: {
+            enabled: true,
+            rateLimit: 10,
+          },
+        })
       );
       await subscriptionClient.connect();
 
       // Store events received by the subscription
-      const receivedEvents: HPKVResponse[] = [];
+      const receivedEvents: HPKVNotificationResponse[] = [];
 
       // Subscribe to changes
       subscriptionClient.subscribe(event => {
@@ -313,12 +323,12 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       await apiClient.set(testKey, 'updated-via-api');
 
       // Wait for the notification to be delivered
-      await new Promise(resolve => safeSetTimeout(resolve, 1000));
+      await new Promise(resolve => safeSetTimeout(resolve, 2000));
 
       // Check if we received the notification
       expect(receivedEvents.length).toBeGreaterThanOrEqual(1);
-      expect(receivedEvents[0].key).toBe(testKey);
-      expect(receivedEvents[0].value).toBe('updated-via-api');
+      expect((receivedEvents[0] as HPKVNotificationResponse).key).toBe(testKey);
+      expect((receivedEvents[0] as HPKVNotificationResponse).value).toBe('updated-via-api');
     });
 
     it('should not receive notifications for keys not subscribed to', async () => {
@@ -339,7 +349,7 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       );
       await subscriptionClient.connect();
 
-      const receivedEvents: HPKVResponse[] = [];
+      const receivedEvents: HPKVNotificationResponse[] = [];
 
       // Subscribe to only one key
       subscriptionClient.subscribe(event => {
@@ -381,8 +391,8 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       await subscriptionClient1.connect();
       await subscriptionClient2.connect();
 
-      const eventsClient1: HPKVResponse[] = [];
-      const eventsClient2: HPKVResponse[] = [];
+      const eventsClient1: HPKVNotificationResponse[] = [];
+      const eventsClient2: HPKVNotificationResponse[] = [];
 
       // Set up subscriptions for both clients
       subscriptionClient1.subscribe(event => {
@@ -402,8 +412,8 @@ describe('HPKVSubscriptionClient Integration Tests', () => {
       // Both clients should receive the notification
       expect(eventsClient1.length).toBeGreaterThanOrEqual(1);
       expect(eventsClient2.length).toBeGreaterThanOrEqual(1);
-      expect(eventsClient1[0].value).toBe('notify-multiple-clients');
-      expect(eventsClient2[0].value).toBe('notify-multiple-clients');
+      expect((eventsClient1[0] as HPKVNotificationResponse).value).toBe('notify-multiple-clients');
+      expect((eventsClient2[0] as HPKVNotificationResponse).value).toBe('notify-multiple-clients');
     });
 
     it('should stop receiving notifications after unsubscribing', async () => {

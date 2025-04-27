@@ -35,6 +35,8 @@ Currently, only the NodeJS SDK is available, with more language implementations 
 ## Available SDKs
 
 ### NodeJS
+[![npm version](https://img.shields.io/npm/v/@hpkv/websocket-client.svg)](https://www.npmjs.com/package/@hpkv/websocket-client)
+[![npm downloads](https://img.shields.io/npm/dm/@hpkv/websocket-client.svg)](https://www.npmjs.com/package/@hpkv/websocket-client)
 
 - [NodeJS SDK Documentation](sdk/node/README.md)
 - Installation: `npm install @hpkv/websocket-client`
@@ -86,7 +88,7 @@ npm install @hpkv/websocket-client
 
 - [HPKV Overview](https://hpkv.io/docs/overview)
 - [WebSocket API Documentation](https://hpkv.io/docs/websocket-api)
-- [Getting Started Guide](https://hpkv.io/docs/getting-started)
+- [SDKs Documentation](https://hpkv.io/docs/sdk-guides)
 - [Real-time Pub-Sub Blog Post](https://hpkv.io/blog/2025/03/real-time-pub-sub)
 
 ## License

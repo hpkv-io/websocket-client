@@ -1,5 +1,10 @@
-import { BaseWebSocketClient } from './base-client';
-import { HPKVResponse, HPKVEventHandler, ConnectionConfig } from '../types';
+import { BaseWebSocketClient } from '../websocket/base-websocket-client';
+import {
+  HPKVEventHandler,
+  ConnectionConfig,
+  HPKVNotificationResponse,
+  HPKVResponse,
+} from '../websocket';
 
 /**
  * Client for subscribing to real-time updates on key changes
@@ -59,14 +64,14 @@ export class HPKVSubscriptionClient extends BaseWebSocketClient {
    *
    * @param message - The message received from the WebSocket server
    */
-  protected handleMessage(message: HPKVResponse): void {
-    // Handle subscription messages
-    if (message.type === 'notification') {
+  protected handleMessage(message: HPKVResponse): boolean {
+    let handled = super.handleMessage(message);
+    if (!handled) {
       if (this.subscriptions.size > 0) {
-        this.subscriptions.forEach(callback => callback(message));
+        this.subscriptions.forEach(callback => callback(message as HPKVNotificationResponse));
       }
-      return;
+      handled = true;
     }
-    super.handleMessage(message);
+    return handled;
   }
 }
