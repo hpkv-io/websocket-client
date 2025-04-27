@@ -1,5 +1,5 @@
 import { HPKVClientFactory } from '../src/client-factory';
-import { WebsocketTokenManager } from '../src/token-manager';
+import { WebsocketTokenManager } from '../src/utilities/token-manager';
 import dotenv from 'dotenv';
 
 // Load environment variables
