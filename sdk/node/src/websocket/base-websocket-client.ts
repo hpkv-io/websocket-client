@@ -485,8 +485,6 @@ export abstract class BaseWebSocketClient {
    * @throws ConnectionError if reconnection fails after max attempts
    */
   protected async reconnect(): Promise<void> {
-    this.syncConnectionState();
-
     if (
       this.connectionState === ConnectionState.DISCONNECTING ||
       this.connectionState === ConnectionState.CONNECTING
@@ -579,7 +577,6 @@ export abstract class BaseWebSocketClient {
    */
   protected handleDisconnect(code?: number, reason?: string): void {
     if (this.connectionState === ConnectionState.DISCONNECTING) {
-      this.connectionState = ConnectionState.DISCONNECTED;
       return;
     }
 

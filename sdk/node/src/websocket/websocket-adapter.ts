@@ -92,14 +92,16 @@ export function createWebSocket(url: string): IWebSocket {
  * @param WebSocketClass - The WebSocket constructor to use
  * @returns A WebSocket instance with normalized interface
  */
-function createBrowserWebSocket(
+export function createBrowserWebSocket(
   url: string,
   WebSocketClass: typeof WebSocket = WebSocket
 ): IWebSocket {
   const ws = new WebSocketClass(url);
 
   return {
-    readyState: ws.readyState,
+    get readyState(): number {
+      return ws.readyState;
+    },
     on(event: string, listener: (...args: any[]) => void): IWebSocket {
       if (event === 'open') {
         ws.onopen = listener;
@@ -144,7 +146,7 @@ function createBrowserWebSocket(
  * @param url - The WebSocket URL to connect to
  * @returns A WebSocket instance with normalized interface
  */
-function createNodeWebSocket(url: string): IWebSocket {
+export function createNodeWebSocket(url: string): IWebSocket {
   // Dynamically import WebSocket for Node.js to avoid issues in browser environments
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
