@@ -27,7 +27,7 @@ export class ThrottlingManager {
       ...DEFAULT_THROTTLING,
       ...(config || {}),
     };
-    this.currentRate = this.throttlingConfig.rateLimit;
+    this.currentRate = this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number);
   }
 
   /**
@@ -61,7 +61,10 @@ export class ThrottlingManager {
       ...this.throttlingConfig,
       ...config,
     };
-    this.currentRate = Math.min(this.currentRate, this.throttlingConfig.rateLimit);
+    this.currentRate = Math.min(
+      this.currentRate,
+      this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)
+    );
 
     if (!wasEnabled && this.throttlingConfig.enabled && this.pingInterval === null) {
       // Client should call initPingInterval
@@ -115,10 +118,16 @@ export class ThrottlingManager {
     // Detect RTT trend
     if (rtt > this.lastRtt && rtt > avgRtt) {
       // RTT increasing: apply backpressure
-      this.currentRate = Math.max(this.config.rateLimit * 0.1, this.currentRate * 0.5);
+      this.currentRate = Math.max(
+        (this.config.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)) * 0.1,
+        this.currentRate * 0.5
+      );
     } else if (rtt < this.lastRtt && rtt < avgRtt && Date.now() > this.backoffUntil) {
       // RTT decreasing: cautiously increase rate
-      this.currentRate = Math.min(this.config.rateLimit, this.currentRate * 1.2);
+      this.currentRate = Math.min(
+        this.config.rateLimit || (DEFAULT_THROTTLING.rateLimit as number),
+        this.currentRate * 1.2
+      );
     }
 
     this.lastRtt = rtt;
@@ -130,7 +139,10 @@ export class ThrottlingManager {
   notify429(): void {
     if (Date.now() < this.backoffUntil) return; // Already in backoff
 
-    this.currentRate = Math.max(this.throttlingConfig.rateLimit * 0.1, this.currentRate * 0.5);
+    this.currentRate = Math.max(
+      (this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)) * 0.1,
+      this.currentRate * 0.5
+    );
     this.backoffUntil = Date.now() + 1000 * Math.min(60, 2 ** this.rttSamples.length); // Exponential backoff
   }
 

@@ -71,9 +71,9 @@ export class BrowserWebSocketAdapter implements IWebSocket {
 export function createWebSocket(url: string): IWebSocket {
   let ws = null;
   if (typeof global !== 'undefined' && typeof global.WebSocket === 'function') {
-    ws = window.WebSocket;
-  } else if (typeof window !== 'undefined' && typeof window.WebSocket === 'function') {
     ws = global.WebSocket;
+  } else if (typeof window !== 'undefined' && typeof window.WebSocket === 'function') {
+    ws = window.WebSocket;
   } else if (typeof self !== 'undefined' && typeof self.WebSocket === 'function') {
     ws = self.WebSocket;
   }

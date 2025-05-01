@@ -89,7 +89,7 @@ export interface ConnectionStats {
  */
 export interface ThrottlingConfig {
   enabled: boolean;
-  rateLimit: number; // Requests per second
+  rateLimit?: number; // Requests per second
 }
 
 /**
