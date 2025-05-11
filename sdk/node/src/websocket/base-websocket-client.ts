@@ -49,54 +49,28 @@ export abstract class BaseWebSocketClient {
    * @param config - The connection configuration including timeouts and retry options
    */
   constructor(baseUrl: string, config?: ConnectionConfig) {
-    this.baseUrl = baseUrl.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
+    // Convert protocol and ensure /ws suffix
+    let processedBaseUrl = baseUrl.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
+    if (!processedBaseUrl.endsWith('/ws')) {
+      processedBaseUrl += '/ws';
+    }
+    this.baseUrl = processedBaseUrl;
 
     // Initialize retry configuration
     this.retry = {
       maxAttempts: config?.maxReconnectAttempts || 3,
       initialDelayMs: config?.initialDelayBetweenReconnects || 1000,
       maxDelayMs: config?.maxDelayBetweenReconnects || 30000,
-      jitterMs: 500, // Add some randomness to prevent thundering herd
+      jitterMs: 500,
     };
 
     // Initialize message handler
     this.messageHandler = new MessageHandler();
 
-    // Initialize throttling manager with the event emitter
+    // Initialize throttling manager
     this.throttlingManager = new ThrottlingManager(config?.throttling);
     this.messageHandler.onRequestLimitExceeded(() => {
       this.throttlingManager.notify429();
-    });
-
-    this.initPing();
-  }
-
-  /**
-   * Initialize the ping functionality
-   */
-  private initPing(): void {
-    this.throttlingManager.initPingInterval(async () => {
-      const response = await this.ping();
-      return response;
-    });
-  }
-
-  /**
-   * Pings the server to measure round-trip time
-   */
-  private async ping(): Promise<{ status: number; rtt: number }> {
-    const baseUrl = this.baseUrl
-      .replace(/^ws:\/\//, 'http://')
-      .replace(/^wss:\/\//, 'https://')
-      .replace(/\/ws$/, '');
-    const pingUrl = `${baseUrl}/ping`;
-    const start = Date.now();
-    return fetch(pingUrl).then(response => {
-      const rtt = Date.now() - start;
-      return {
-        status: response.status,
-        rtt,
-      };
     });
   }
 
@@ -138,11 +112,6 @@ export abstract class BaseWebSocketClient {
    * @throws Error if the key is not found or connection fails
    */
   async get(key: string, timeoutMs?: number): Promise<HPKVGetResponse> {
-    // Wait for throttling if enabled
-    if (this.throttlingManager.config.enabled) {
-      await this.throttlingManager.throttleRequest();
-    }
-
     return this.sendMessage(
       {
         op: HPKVOperation.GET,
@@ -167,8 +136,6 @@ export abstract class BaseWebSocketClient {
     partialUpdate = false,
     timeoutMs?: number
   ): Promise<HPKVSetResponse | HPKVPatchResponse> {
-    await this.throttlingManager.throttleRequest();
-
     const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
     const operation = partialUpdate ? HPKVOperation.PATCH : HPKVOperation.SET;
 
@@ -190,8 +157,6 @@ export abstract class BaseWebSocketClient {
    * @throws Error if the key is not found or connection fails
    */
   async delete(key: string, timeoutMs?: number): Promise<HPKVDeleteResponse> {
-    await this.throttlingManager.throttleRequest();
-
     return this.sendMessage(
       {
         op: HPKVOperation.DELETE,
@@ -216,8 +181,6 @@ export abstract class BaseWebSocketClient {
     options?: RangeQueryOptions,
     timeoutMs?: number
   ): Promise<HPKVRangeResponse> {
-    await this.throttlingManager.throttleRequest();
-
     return this.sendMessage(
       {
         op: HPKVOperation.RANGE,
@@ -242,8 +205,6 @@ export abstract class BaseWebSocketClient {
     value: number,
     timeoutMs?: number
   ): Promise<HPKVAtomicResponse> {
-    await this.throttlingManager.throttleRequest();
-
     return this.sendMessage(
       {
         op: HPKVOperation.ATOMIC,
@@ -355,15 +316,19 @@ export abstract class BaseWebSocketClient {
         });
 
         ws.on('error', (error: Error) => {
+          // Only handle error if we are still in the connecting phase
           if (this.connectionState === ConnectionState.CONNECTING) {
             if (this.connectionTimeout) {
               clearTimeout(this.connectionTimeout as NodeJS.Timeout);
               this.connectionTimeout = null;
             }
             this.connectionState = ConnectionState.DISCONNECTED;
+            // Reject the promise and emit the error only if this handler
+            // is the one transitioning the state from CONNECTING.
             reject(new ConnectionError(error.message));
             this.emitter.emit('error', error);
           }
+          // If state is already DISCONNECTED (e.g., by timeout), do nothing further here.
         });
       } catch (error) {
         this.cleanup();
@@ -443,7 +408,6 @@ export abstract class BaseWebSocketClient {
       throttling: this.throttlingManager.config.enabled
         ? {
             currentRate: throttlingMetrics.currentRate,
-            avgRtt: throttlingMetrics.avgRtt,
             queueLength: throttlingMetrics.queueLength,
           }
         : null,
@@ -472,11 +436,6 @@ export abstract class BaseWebSocketClient {
    */
   updateThrottlingConfig(config: Partial<ThrottlingConfig>): void {
     this.throttlingManager.updateConfig(config);
-
-    // If changed from disabled to enabled, initialize ping
-    if (!this.throttlingManager.config.enabled && config.enabled) {
-      this.initPing();
-    }
   }
 
   /**
@@ -621,14 +580,8 @@ export abstract class BaseWebSocketClient {
     message: Omit<HPKVRequestMessage, 'messageId'>,
     timeoutMs?: number
   ): Promise<HPKVResponse> {
-    // Sync connection state first
+    await this.throttlingManager.throttleRequest();
     this.syncConnectionState();
-
-    if (this.connectionState !== ConnectionState.CONNECTED) {
-      throw new ConnectionError('Client is not connected');
-    }
-
-    // Create message with ID
     const messageWithId = this.messageHandler.createMessage(message);
     const { promise, cancel } = this.messageHandler.registerRequest(
       messageWithId.messageId as number,
@@ -641,7 +594,6 @@ export abstract class BaseWebSocketClient {
         this.ws.send(JSON.stringify(messageWithId));
       } else {
         cancel('WebSocket is not open');
-        throw new ConnectionError('WebSocket is not open');
       }
     } catch (error) {
       cancel(`Failed to send message: ${error instanceof Error ? error.message : 'Unknown error'}`);

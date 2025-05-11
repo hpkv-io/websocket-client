@@ -33,7 +33,7 @@ For more details, refer to the [SDK Documentation Page](https://hpkv.io/docs/sdk
 - WebSocket-based communication for low-latency operations
 - Automatic reconnection with exponential backoff
 - Support for key monitoring (pub-sub) for real-time updates
-- Dynamic throttling based on network conditions
+- Request throttling
 - Support for atomic operations
 - Range queries for efficient data retrieval
 - Robust error handling and type safety
@@ -149,15 +149,14 @@ try {
 
 ## Request Throttling
 
-The HPKV WebSocket client includes an adaptive request throttling system that automatically optimizes request rates based on network conditions and server responses:
+The HPKV WebSocket client includes a request throttling system to help manage request rates and prevent overwhelming the server.
 
 ### Key Throttling Features
 
-- **Adaptive Rate Limiting**: Automatically adjusts request rates based on RTT (Round Trip Time) measurements
-- **Dynamic Backpressure**: Reduces request rates when network latency increases
-- **Exponential Backoff**: Handles 429 (Too Many Requests) responses with intelligent retry logic
-- **Queue Management**: Ensures requests are processed at optimal rates without overwhelming the server
-- **Configurable Limits**: Customize throttling behavior to match your application needs
+- **Rate Limiting**: Enforces a maximum number of requests per second.
+- **Exponential Backoff**: Handles 429 (Too Many Requests) responses with intelligent retry logic, reducing the request rate when signaled by the server.
+- **Queue Management**: Queues requests when the rate limit is exceeded, processing them as slots become available according to the limit.
+- **Configurable Limits**: Customize throttling behavior to match your application needs.
 
 ### Configuring Throttling
 
@@ -181,12 +180,11 @@ apiClient.updateThrottlingConfig({
 ```javascript
 // Get detailed throttling metrics
 const status = apiClient.getThrottlingStatus();
-console.log(`Current rate: ${status.metrics.currentRate} req/sec`);
-console.log(`Average RTT: ${status.metrics.avgRtt || 'N/A'} ms`);
+console.log(`Current allowed rate: ${status.metrics.currentRate} req/sec`);
 console.log(`Queue length: ${status.metrics.queueLength}`);
 ```
 
-The throttling system automatically pings the server at regular intervals to measure RTT and adjust request rates accordingly. When network latency increases or the server returns a 429 response, the client reduces the request rate and applies exponential backoff to prevent service disruption.
+The throttling system queues requests if they exceed the `currentRate`. When the server returns a 429 response, the client significantly reduces the `currentRate` and applies exponential backoff, gradually increasing the rate back towards the configured `rateLimit` once the backoff period expires.
 
 ## Connection Management
 
@@ -244,6 +242,12 @@ console.log(`Connected: ${stats.isConnected}`);
 console.log(`State: ${stats.connectionState}`);
 console.log(`Reconnect attempts: ${stats.reconnectAttempts}`);
 console.log(`Pending messages: ${stats.messagesPending}`);
+
+// Log throttling info if enabled
+if (stats.throttling) {
+  console.log(`Throttling Rate: ${stats.throttling.currentRate} req/sec`);
+  console.log(`Throttling Queue: ${stats.throttling.queueLength}`);
+}
 ```
 
 ## Reference
@@ -276,7 +280,7 @@ Abstract base class for WebSocket communication with the HPKV service.
 | `off(event, listener)` | Removes an event listener |
 | `getConnectionState()` | Returns the current connection state |
 | `getConnectionStats()` | Returns statistics about the connection |
-| `getThrottlingStatus()` | Returns throttling configuration and metrics |
+| `getThrottlingStatus()` | Returns throttling configuration and metrics (current rate, queue length) |
 | `updateThrottlingConfig(config)` | Updates the throttling configuration |
 
 #### `HPKVApiClient`
@@ -358,6 +362,17 @@ Union type for all possible response types:
 - `HPKVNotificationResponse` - Response for key notifications (pub-sub)
 - `HPKVErrorResponse` - Response for error messages
 
+#### `ConnectionStats`
+
+Interface representing connection statistics.
+
+| Property | Type | Description |
+| -------- | ---- | ----------- |
+| `isConnected` | `boolean` | Whether the client is currently connected |
+| `reconnectAttempts` | `number` | Number of reconnect attempts since the last successful connection |
+| `messagesPending` | `number` | Number of messages awaiting a response |
+| `connectionState` | `string` (`ConnectionState` enum) | Current state of the connection |
+| `throttling` | `object \| null` | Throttling metrics if enabled (contains `currentRate`, `queueLength`) |
 
 ## Response Types
 
@@ -384,64 +399,3 @@ interface HPKVSetResponse {
   messageId?: number;
 }
 ```
-
-### PATCH Operation Response
-
-```typescript
-interface HPKVPatchResponse {
-  success: boolean;
-  code?: number;
-  message?: string;
-  messageId?: number;
-}
-```
-
-### DELETE Operation Response
-
-```typescript
-interface HPKVDeleteResponse {
-  success: boolean;
-  code?: number;
-  message?: string;
-  messageId?: number;
-}
-```
-
-### RANGE Operation Response
-
-```typescript
-interface HPKVRangeResponse {
-  records: Array<{ key: string; value: string }>;
-  count: number;
-  truncated: boolean;
-  code?: number;
-  messageId?: number;
-}
-```
-
-### ATOMIC Operation Response
-
-```typescript
-interface HPKVAtomicResponse {
-  success: boolean;
-  key?: string;
-  newValue: number;
-  code?: number;
-  messageId?: number;
-}
-```
-
-### Notification Response (pub-sub)
-
-```typescript
-interface HPKVNotificationResponse {
-  type: 'notification';
-  key: string;
-  value: string | number | null;
-  timestamp: number;
-}
-```
-
-## License
-
-MIT
