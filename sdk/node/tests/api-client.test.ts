@@ -1,5 +1,5 @@
 /// <reference types="jest" />
-import { ConnectionError, HPKVClientFactory, HPKVError } from '../src';
+import { HPKVClientFactory, HPKVError } from '../src';
 import { HPKVApiClient } from '../src/clients/api-client';
 import dotenv from 'dotenv';
 
@@ -241,14 +241,10 @@ describe('HPKVApiClient Integration Tests', () => {
     it('should throw connection error when client is not connected', async () => {
       const disconnectedClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       const testKey = generateTestKey('connection-error');
-      try {
-        await disconnectedClient.set(testKey, 'value');
-        fail('Expected an error but none was thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(ConnectionError);
-      } finally {
-        disconnectedClient.destroy();
-      }
+      await expect(disconnectedClient.set(testKey, 'value')).rejects.toThrow(
+        'WebSocket is not open'
+      );
+      disconnectedClient.destroy();
     });
   });
 

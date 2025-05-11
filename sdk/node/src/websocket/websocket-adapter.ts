@@ -2,68 +2,6 @@ import { IWebSocket } from './types';
 import { HPKVNotificationResponse, HPKVBaseResponse } from './types';
 
 /**
- * WebSocket adapter for browser environments
- * Makes the browser WebSocket API compatible with the Node.js ws package API
- */
-export class BrowserWebSocketAdapter implements IWebSocket {
-  private socket: WebSocket;
-  private eventHandlers: Record<string, ((...args: any[]) => void)[]> = {
-    message: [],
-    open: [],
-    close: [],
-    error: [],
-  };
-
-  constructor(url: string) {
-    this.socket = new WebSocket(url);
-
-    // Set up event listeners for the native WebSocket
-    this.socket.addEventListener('message', event => {
-      this.eventHandlers.message.forEach(handler => handler(event.data));
-    });
-
-    this.socket.addEventListener('open', _event => {
-      this.eventHandlers.open.forEach(handler => handler());
-    });
-
-    this.socket.addEventListener('close', event => {
-      this.eventHandlers.close.forEach(handler => handler(event.code, event.reason));
-    });
-
-    this.socket.addEventListener('error', event => {
-      this.eventHandlers.error.forEach(handler => handler(event));
-    });
-  }
-
-  on(event: string, listener: (...args: any[]) => void): IWebSocket {
-    if (this.eventHandlers[event]) {
-      this.eventHandlers[event].push(listener);
-    }
-    return this;
-  }
-
-  removeAllListeners(): IWebSocket {
-    // Clear all event handlers
-    Object.keys(this.eventHandlers).forEach(event => {
-      this.eventHandlers[event] = [];
-    });
-    return this;
-  }
-
-  send(data: string): void {
-    this.socket.send(data);
-  }
-
-  close(): void {
-    this.socket.close();
-  }
-
-  get readyState(): number {
-    return this.socket.readyState;
-  }
-}
-
-/**
  * Creates a WebSocket instance that works with Node.js or browser environments
  * @param url - The WebSocket URL to connect to
  * @returns A WebSocket instance with normalized interface
