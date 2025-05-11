@@ -97,9 +97,7 @@ export interface ThrottlingConfig {
  */
 export interface ThrottlingMetrics {
   currentRate: number;
-  avgRtt: number | null;
   queueLength: number;
-  rttSamples: number[];
 }
 
 /**

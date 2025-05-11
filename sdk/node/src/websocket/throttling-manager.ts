@@ -13,13 +13,11 @@ const DEFAULT_THROTTLING: ThrottlingConfig = {
  */
 export class ThrottlingManager {
   private currentRate: number;
-  private rttSamples: number[] = [];
   private throttleQueue: Array<() => void> = [];
   private processingQueue = false;
-  private lastRequestTime = 0;
-  private lastRtt = 0;
+  private nextAvailableSlotTime = 0;
   private backoffUntil = 0;
-  private pingInterval: NodeJS.Timeout | null = null;
+  private backoffExponent = 0;
   private throttlingConfig: ThrottlingConfig;
 
   constructor(config?: Partial<ThrottlingConfig>) {
@@ -43,12 +41,7 @@ export class ThrottlingManager {
   getMetrics(): ThrottlingMetrics {
     return {
       currentRate: this.currentRate,
-      avgRtt:
-        this.rttSamples.length > 0
-          ? this.rttSamples.reduce((sum, val) => sum + val, 0) / this.rttSamples.length
-          : null,
       queueLength: this.throttleQueue.length,
-      rttSamples: [...this.rttSamples],
     };
   }
 
@@ -66,71 +59,12 @@ export class ThrottlingManager {
       this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)
     );
 
-    if (!wasEnabled && this.throttlingConfig.enabled && this.pingInterval === null) {
-      // Client should call initPingInterval
-    } else if (wasEnabled && !this.throttlingConfig.enabled) {
-      this.clearPingInterval();
+    if (wasEnabled && !this.throttlingConfig.enabled) {
       while (this.throttleQueue.length > 0) {
         const next = this.throttleQueue.shift();
         if (next) next();
       }
     }
-  }
-
-  /**
-   * Initializes periodic RTT measurement
-   */
-  initPingInterval(pingFunction: () => Promise<{ status: number; rtt: number }>): void {
-    this.clearPingInterval();
-    if (!this.throttlingConfig.enabled) return;
-
-    this.pingInterval = setInterval(async () => {
-      try {
-        const { status, rtt } = await pingFunction();
-        if (status === 200) {
-          this.updateRtt(rtt);
-        }
-      } catch (error) {
-        console.warn('Ping failed:', error);
-      }
-    }, 1000); // Ping every second
-  }
-
-  /**
-   * Clears the ping interval
-   */
-  private clearPingInterval(): void {
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
-  }
-
-  /**
-   * Updates RTT samples and adjusts rate based on RTT trend
-   */
-  private updateRtt(rtt: number): void {
-    this.rttSamples.push(rtt);
-    if (this.rttSamples.length > 5) this.rttSamples.shift(); // Keep last 5 samples
-
-    const avgRtt = this.rttSamples.reduce((sum, val) => sum + val, 0) / this.rttSamples.length;
-
-    // Detect RTT trend
-    if (rtt > this.lastRtt && rtt > avgRtt) {
-      // RTT increasing: apply backpressure
-      this.currentRate = Math.max(
-        (this.config.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)) * 0.1,
-        this.currentRate * 0.5
-      );
-    } else if (rtt < this.lastRtt && rtt < avgRtt && Date.now() > this.backoffUntil) {
-      // RTT decreasing: cautiously increase rate
-      this.currentRate = Math.min(
-        this.config.rateLimit || (DEFAULT_THROTTLING.rateLimit as number),
-        this.currentRate * 1.2
-      );
-    }
-
-    this.lastRtt = rtt;
   }
 
   /**
@@ -143,21 +77,40 @@ export class ThrottlingManager {
       (this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)) * 0.1,
       this.currentRate * 0.5
     );
-    this.backoffUntil = Date.now() + 1000 * Math.min(60, 2 ** this.rttSamples.length); // Exponential backoff
+    const backoffDelay = 1000 * Math.min(60, 2 ** this.backoffExponent);
+    this.backoffUntil = Date.now() + backoffDelay;
+    this.backoffExponent++;
   }
 
   /**
-   * Adds a request to the throttle queue
+   * Adds a request to the throttle queue if needed, or executes immediately.
    */
   async throttleRequest(): Promise<void> {
-    if (!this.throttlingConfig.enabled) return Promise.resolve();
+    if (!this.throttlingConfig.enabled) {
+      return Promise.resolve();
+    }
 
-    return new Promise<void>(resolve => {
-      this.throttleQueue.push(resolve);
-      if (!this.processingQueue) {
-        this.processThrottleQueue();
-      }
-    });
+    const now = Date.now();
+    const minTimeBetweenRequests = 1000 / this.currentRate;
+
+    // Determine the earliest time this request could run
+    // Ensure the next slot isn't before the current time or any backoff period
+    const earliestRunTime = Math.max(now, this.nextAvailableSlotTime, this.backoffUntil);
+
+    if (earliestRunTime <= now) {
+      // Fast path: Can run immediately without violating rate limit
+      this.nextAvailableSlotTime = now + minTimeBetweenRequests; // Reserve slot for the next one
+      return Promise.resolve(); // Allow request to proceed immediately
+    } else {
+      // Slow path: Must wait for the calculated slot
+      return new Promise<void>(resolve => {
+        this.throttleQueue.push(resolve); // Add to the queue
+        if (!this.processingQueue) {
+          // Start processing the queue if it wasn't already active
+          this.processThrottleQueue();
+        }
+      });
+    }
   }
 
   /**
@@ -172,29 +125,49 @@ export class ThrottlingManager {
     this.processingQueue = true;
     const now = Date.now();
 
+    // Ensure next slot is not in the past relative to now
+    this.nextAvailableSlotTime = Math.max(now, this.nextAvailableSlotTime);
+
+    // Check for backoff period
     if (now < this.backoffUntil) {
-      setTimeout(() => this.processThrottleQueue(), this.backoffUntil - now);
+      // If backing off, the next available slot should also respect the backoff period
+      this.nextAvailableSlotTime = Math.max(this.nextAvailableSlotTime, this.backoffUntil);
+
+      const backoffWait = this.nextAvailableSlotTime - now;
+      setTimeout(() => this.processThrottleQueue(), backoffWait);
       return;
     }
 
     const minTimeBetweenRequests = 1000 / this.currentRate; // in ms
-    const timeToWait = Math.max(0, this.lastRequestTime + minTimeBetweenRequests - now);
 
+    // Calculate time to wait until the next available slot
+    const timeToWait = this.nextAvailableSlotTime - now;
+
+    // Schedule the next request processing
     setTimeout(() => {
+      // Dequeue *before* resolving, in case resolve() triggers another request quickly
       const next = this.throttleQueue.shift();
       if (next) {
-        this.lastRequestTime = Date.now();
-        next();
+        next(); // Resolve the promise, allowing the request to proceed
       }
-      this.processThrottleQueue();
+
+      // Check if more items are waiting and continue processing
+      // This recursive call ensures the queue keeps moving
+      if (this.throttleQueue.length > 0) {
+        this.processThrottleQueue();
+      } else {
+        this.processingQueue = false;
+      }
     }, timeToWait);
+
+    // Increment the next available slot time for the *subsequent* request
+    this.nextAvailableSlotTime += minTimeBetweenRequests;
   }
 
   /**
    * Cleans up resources
    */
   destroy(): void {
-    this.clearPingInterval();
     while (this.throttleQueue.length > 0) {
       const next = this.throttleQueue.shift();
       if (next) next();
