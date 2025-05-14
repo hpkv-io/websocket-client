@@ -20,34 +20,6 @@ export const WS_CONSTANTS = {
 } as const;
 
 /**
- * Interface for a pending request
- */
-export interface PendingRequest {
-  resolve: (value: HPKVResponse) => void;
-  reject: (reason?: unknown) => void;
-  timer: NodeJS.Timeout | number;
-  timestamp: number;
-  operation: string;
-}
-
-/**
- * Configuration for the exponential backoff retry strategy
- */
-export interface RetryConfig {
-  /** Maximum number of reconnection attempts */
-  maxAttempts: number;
-
-  /** Initial delay between reconnection attempts in milliseconds */
-  initialDelayMs: number;
-
-  /** Maximum delay between reconnection attempts in milliseconds */
-  maxDelayMs: number;
-
-  /** Random jitter in milliseconds to add to reconnection delay */
-  jitterMs?: number;
-}
-
-/**
  * Connection state for WebSocket client
  */
 export enum ConnectionState {
@@ -58,30 +30,17 @@ export enum ConnectionState {
 }
 
 /**
- * Represents the available operations for HPKV database interactions
+ * Configuration for the exponential backoff retry strategy
  */
-export enum HPKVOperation {
-  GET = 1,
-  SET = 2,
-  PATCH = 3,
-  DELETE = 4,
-  RANGE = 5,
-  ATOMIC = 6,
-}
-
-/**
- * Statistics about the current WebSocket connection
- */
-export interface ConnectionStats {
-  isConnected: boolean;
-  reconnectAttempts: number;
-  messagesPending: number;
-  connectionState?: string;
-  throttling?: {
-    currentRate: number;
-    avgRtt: number | null;
-    queueLength: number;
-  } | null;
+export interface RetryConfig {
+  /** Maximum number of reconnection attempts before giving up */
+  maxReconnectAttempts?: number;
+  /** Initial delay in milliseconds between reconnection attempts */
+  initialDelayBetweenReconnects?: number;
+  /** Maximum delay in milliseconds between reconnection attempts */
+  maxDelayBetweenReconnects?: number;
+  /** Random jitter in milliseconds to add to reconnection delay */
+  jitterMs?: number;
 }
 
 /**
@@ -103,15 +62,35 @@ export interface ThrottlingMetrics {
 /**
  * Configuration options for WebSocket connection behavior
  */
-export interface ConnectionConfig {
-  /** Maximum number of reconnection attempts before giving up */
-  maxReconnectAttempts?: number;
-  /** Initial delay in milliseconds between reconnection attempts */
-  initialDelayBetweenReconnects?: number;
-  /** Maximum delay in milliseconds between reconnection attempts */
-  maxDelayBetweenReconnects?: number;
+export interface ConnectionConfig extends RetryConfig {
   /** Configuration for the throttling mechanism */
   throttling?: ThrottlingConfig;
+}
+
+/**
+ * Statistics about the current WebSocket connection
+ */
+export interface ConnectionStats {
+  isConnected: boolean;
+  reconnectAttempts: number;
+  messagesPending: number;
+  connectionState?: ConnectionState;
+  throttling?: {
+    currentRate: number;
+    queueLength: number;
+  } | null;
+}
+
+/**
+ * Represents the available operations for HPKV database interactions
+ */
+export enum HPKVOperation {
+  GET = 1,
+  SET = 2,
+  PATCH = 3,
+  DELETE = 4,
+  RANGE = 5,
+  ATOMIC = 6,
 }
 
 /**
@@ -251,6 +230,17 @@ export type HPKVResponse =
   | HPKVAtomicResponse
   | HPKVNotificationResponse
   | HPKVErrorResponse;
+
+/**
+ * Interface for a pending request
+ */
+export interface PendingRequest {
+  resolve: (value: HPKVResponse) => void;
+  reject: (reason?: unknown) => void;
+  timer: NodeJS.Timeout | number;
+  timestamp: number;
+  operation: string;
+}
 
 /**
  * Event handler function type for HPKV responses

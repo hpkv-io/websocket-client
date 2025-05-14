@@ -282,7 +282,7 @@ describe('HPKVApiClient Integration Tests', () => {
                 try {
                   await client.get(`${testKey}-${index - 1}`);
                 } catch (error) {
-                  // Ignore not found errors, we're just testing throttling
+                  console.error('Error getting key:', error);
                 }
               }
               completionTimes.push(Date.now());

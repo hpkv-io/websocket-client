@@ -2,6 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/@hpkv/websocket-client.svg)](https://www.npmjs.com/package/@hpkv/websocket-client)
 [![npm downloads](https://img.shields.io/npm/dm/@hpkv/websocket-client.svg)](https://www.npmjs.com/package/@hpkv/websocket-client)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./License)
 
 This is the official Node.js client for the HPKV WebSocket API, providing high-performance access to HPKV's real-time key-value store capabilities.
 
@@ -41,18 +42,18 @@ For more details, refer to the [SDK Documentation Page](https://hpkv.io/docs/sdk
 ## Installation
 
 ```bash
-npm install @hpkv/node-client
+npm install @hpkv/websocket-client
 ```
 
 ## Quick Start
 
 ```javascript
-import { HPKVClientFactory } from '@hpkv/node-client';
+import { HPKVClientFactory } from '@hpkv/websocket-client';
 
 // Create an API client for server-side operations
 const apiClient = HPKVClientFactory.createApiClient(
   'your-api-key',
-  'wss://api.hpkv.io',
+  'your-api-base-url',
 );
 
 // Connect to the HPKV service
@@ -88,7 +89,7 @@ await apiClient.disconnect();
 For real-time updates on key changes:
 
 ```javascript
-import { HPKVClientFactory } from '@hpkv/node-client';
+import { HPKVClientFactory } from '@hpkv/websocket-client';
 
 // First gnerate a token to be used for connection to websocket with subscription to provided changes.
 const tokenManager = new WebsocketTokenManager(API_KEY, BASE_URL);
@@ -101,7 +102,7 @@ const token = await tokenManager.generateToken({
 // Create a subscription client for real-time updates
 const subscriptionClient = HPKVClientFactory.createSubscriptionClient(
   'your-subscription-token',
-  'wss://api.hpkv.io',
+  'your-api-base-url',
 );
 
 // Connect to the service
@@ -161,7 +162,7 @@ The HPKV WebSocket client includes a request throttling system to help manage re
 ### Configuring Throttling
 
 ```javascript
-const apiClient = HPKVClientFactory.createApiClient('your-api-key', 'wss://api.hpkv.io', {
+const apiClient = HPKVClientFactory.createApiClient('your-api-key', 'your-api-base-url', {
   throttling: {
     enabled: true,       // Enable/disable throttling (default: true)
     rateLimit: 10        // Default rate limit in requests per second
@@ -225,7 +226,7 @@ apiClient.on('error', (error) => {
 ### Connection Configuration
 
 ```javascript
-const apiClient = HPKVClientFactory.createApiClient('your-api-key', 'wss://api.hpkv.io', {
+const apiClient = HPKVClientFactory.createApiClient('your-api-key', 'your-api-base-url', {
   // Reconnection settings
   maxReconnectAttempts: 5,                 // Maximum reconnection attempts
   initialDelayBetweenReconnects: 1000,     // Initial delay in ms
@@ -309,6 +310,8 @@ Utility for generating authentication tokens for WebSocket connections.
 
 ### Key Types and Interfaces
 
+This section details key exported types and interfaces you'll work with when using the SDK.
+
 #### `ConnectionConfig`
 
 Configuration options for the WebSocket connection.
@@ -349,19 +352,6 @@ Enum representing the connection state.
 | `CONNECTED` | Successfully connected |
 | `DISCONNECTING` | Disconnection in progress |
 
-#### `HPKVResponse`
-
-Union type for all possible response types:
-
-- `HPKVGetResponse` - Response for GET operations
-- `HPKVSetResponse` - Response for SET operations
-- `HPKVPatchResponse` - Response for PATCH operations
-- `HPKVDeleteResponse` - Response for DELETE operations
-- `HPKVRangeResponse` - Response for RANGE operations
-- `HPKVAtomicResponse` - Response for ATOMIC operations
-- `HPKVNotificationResponse` - Response for key notifications (pub-sub)
-- `HPKVErrorResponse` - Response for error messages
-
 #### `ConnectionStats`
 
 Interface representing connection statistics.
@@ -374,28 +364,84 @@ Interface representing connection statistics.
 | `connectionState` | `string` (`ConnectionState` enum) | Current state of the connection |
 | `throttling` | `object \| null` | Throttling metrics if enabled (contains `currentRate`, `queueLength`) |
 
-## Response Types
+#### `HPKVResponse`
 
-This client uses TypeScript to provide strongly-typed responses for each operation:
+Union type for all possible response types from the HPKV service. Most responses may include an optional `messageId` (number, linking back to the request) and `code` (number, often an HTTP-like status code).
 
-### GET Operation Response
+- **`HPKVGetResponse`**: Response for GET operations.
+  ```typescript
+  interface HPKVGetResponse {
+    key: string;
+    value: string | number;
+    code?: number;
+    messageId?: number;
+  }
+  ```
 
-```typescript
-interface HPKVGetResponse {
-  key: string;
-  value: string | number;
-  code?: number;
-  messageId?: number;
-}
-```
+- **`HPKVSetResponse`**: Response for SET operations.
+  ```typescript
+  interface HPKVSetResponse {
+    success: boolean;
+    message?: string;
+    code?: number;
+    messageId?: number;
+  }
+  ```
 
-### SET/UPDATE Operation Response
+- **`HPKVPatchResponse`**: Response for PATCH operations (partial updates). Typically similar to `HPKVSetResponse`.
+  ```typescript
+  interface HPKVPatchResponse {
+    success: boolean;
+    message?: string;
+    code?: number;
+    messageId?: number;
+  }
+  ```
 
-```typescript
-interface HPKVSetResponse {
-  success: boolean;
-  code?: number;
-  message?: string;
-  messageId?: number;
-}
-```
+- **`HPKVDeleteResponse`**: Response for DELETE operations.
+  ```typescript
+  interface HPKVDeleteResponse {
+    success: boolean;
+    message?: string;
+    code?: number;
+    messageId?: number;
+  }
+  ```
+
+- **`HPKVRangeResponse`**: Response for RANGE operations.
+  ```typescript
+  interface HPKVRangeRecord {
+    key: string;
+    value: string | number;
+  }
+  interface HPKVRangeResponse {
+    records: HPKVRangeRecord[];
+    code?: number;
+    messageId?: number;
+  }
+  ```
+
+- **`HPKVAtomicResponse`**: Response for ATOMIC operations (e.g., increment).
+  ```typescript
+  interface HPKVAtomicResponse {
+    newValue: number;
+    success: boolean;
+    code?: number;
+    messageId?: number;
+  }
+  ```
+
+- **`HPKVNotificationResponse`**: Data structure for key notifications in pub-sub subscriptions.
+  ```typescript
+  interface HPKVNotificationResponse {
+    key: string;
+    value: string | number | null; // Value is null if the key was deleted
+  }
+  ```
+
+- **`HPKVErrorResponse`**: Structure of the error payload from the server, often wrapped by client-side exceptions.
+  ```typescript
+  interface HPKVErrorResponse {
+    error: string;
+  }
+  ```
