@@ -151,9 +151,6 @@ export function createNodeWebSocket(url: string): IWebSocket {
       },
     };
   } catch (error) {
-    throw new Error(
-      "Failed to initialize WebSocket: 'ws' package is not installed. Please install it with 'npm install ws' or add it to your dependencies." +
-        (error as Error).message
-    );
+    throw new Error(`Failed to initialize WebSocket: ${error}`);
   }
 }
