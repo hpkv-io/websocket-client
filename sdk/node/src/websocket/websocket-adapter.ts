@@ -1,5 +1,6 @@
 import { IWebSocket } from './types';
 import { HPKVNotificationResponse, HPKVBaseResponse } from './types';
+import { WebSocket as NodeWebSocket } from 'ws';
 
 /**
  * Creates a WebSocket instance that works with Node.js or browser environments
@@ -7,17 +8,18 @@ import { HPKVNotificationResponse, HPKVBaseResponse } from './types';
  * @returns A WebSocket instance with normalized interface
  */
 export function createWebSocket(url: string): IWebSocket {
-  let ws = null;
+  let browserWebSocketConstructor: typeof WebSocket | null = null;
   if (typeof global !== 'undefined' && typeof global.WebSocket === 'function') {
-    ws = global.WebSocket;
+    browserWebSocketConstructor = global.WebSocket;
   } else if (typeof window !== 'undefined' && typeof window.WebSocket === 'function') {
-    ws = window.WebSocket;
+    browserWebSocketConstructor = window.WebSocket;
   } else if (typeof self !== 'undefined' && typeof self.WebSocket === 'function') {
-    ws = self.WebSocket;
+    browserWebSocketConstructor = self.WebSocket;
   }
-  if (ws !== null) {
+
+  if (browserWebSocketConstructor) {
     // Browser environment
-    return createBrowserWebSocket(url, ws);
+    return createBrowserWebSocket(url, browserWebSocketConstructor);
   } else {
     // Node.js environment
     return createNodeWebSocket(url);
@@ -51,7 +53,9 @@ export function createBrowserWebSocket(
             listener(data);
           } catch (e) {
             // If parsing fails, pass the raw data
-            listener(event.data);
+            if (e instanceof SyntaxError) {
+              listener(event.data);
+            }
           }
         };
       } else if (event === 'close') {
@@ -87,9 +91,7 @@ export function createBrowserWebSocket(
 export function createNodeWebSocket(url: string): IWebSocket {
   // Dynamically import WebSocket for Node.js to avoid issues in browser environments
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const WebSocket = require('ws');
-    const ws = new WebSocket(url);
+    const ws = new NodeWebSocket(url);
 
     return {
       get readyState(): number {
@@ -125,7 +127,7 @@ export function createNodeWebSocket(url: string): IWebSocket {
               }
             } catch (e) {
               // If parsing fails, just pass the raw data
-              if (Buffer.isBuffer(data)) {
+              if (e instanceof SyntaxError && Buffer.isBuffer(data)) {
                 listener(data.toString());
               } else {
                 listener(data);
@@ -150,7 +152,8 @@ export function createNodeWebSocket(url: string): IWebSocket {
     };
   } catch (error) {
     throw new Error(
-      "Failed to initialize WebSocket: 'ws' package is not installed. Please install it with 'npm install ws' or add it to your dependencies."
+      "Failed to initialize WebSocket: 'ws' package is not installed. Please install it with 'npm install ws' or add it to your dependencies." +
+        (error as Error).message
     );
   }
 }
