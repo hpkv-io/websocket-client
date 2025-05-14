@@ -54,10 +54,7 @@ export class ThrottlingManager {
       ...this.throttlingConfig,
       ...config,
     };
-    this.currentRate = Math.min(
-      this.currentRate,
-      this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)
-    );
+    this.currentRate = this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number);
 
     if (wasEnabled && !this.throttlingConfig.enabled) {
       while (this.throttleQueue.length > 0) {

@@ -25,39 +25,12 @@ export class MessageHandler {
   private messageMap = new Map<number, PendingRequest>();
   private timeouts = { ...DEFAULT_TIMEOUTS };
   private cleanupInterval: NodeJS.Timeout | number | null = null;
-  private requestLimitExceededListeners: ((error: HPKVErrorResponse) => void)[] = [];
 
   /**
-   * Adds a listener to be called when a request limit is exceeded
-   * @param listener - Function to be called with the error response
+   * Callback to be invoked when a rate limit error (e.g., 429) is detected.
+   * The consumer (e.g., BaseWebSocketClient) can set this to react accordingly.
    */
-  onRequestLimitExceeded(listener: (error: HPKVErrorResponse) => void): void {
-    this.requestLimitExceededListeners.push(listener);
-  }
-
-  /**
-   * Removes a request limit exceeded listener
-   * @param listener - The listener function to remove
-   */
-  removeRequestLimitExceededListener(listener: (error: HPKVErrorResponse) => void): void {
-    this.requestLimitExceededListeners = this.requestLimitExceededListeners.filter(
-      l => l !== listener
-    );
-  }
-
-  /**
-   * Notifies all request limit exceeded listeners
-   * @param error - The error response
-   */
-  private notifyRequestLimitExceededListeners(error: HPKVErrorResponse): void {
-    for (const listener of this.requestLimitExceededListeners) {
-      try {
-        listener(error);
-      } catch (e) {
-        console.error('Error in throttling listener:', e);
-      }
-    }
-  }
+  public onRateLimitExceeded: ((error: HPKVErrorResponse) => void) | null = null;
 
   /**
    * Creates a new MessageHandler
@@ -205,7 +178,7 @@ export class MessageHandler {
       (baseMessage.code !== 200 && baseMessage.code !== undefined)
     ) {
       if (message.code === 429) {
-        this.notifyRequestLimitExceededListeners(message as HPKVErrorResponse);
+        this.onRateLimitExceeded?.(message as HPKVErrorResponse);
       }
       pendingRequest.reject(
         new HPKVError(

@@ -13,6 +13,7 @@ import {
   RangeQueryOptions,
   ThrottlingConfig,
   ThrottlingMetrics,
+  HPKVErrorResponse,
 } from './types';
 import { ConnectionError, TimeoutError } from './errors';
 import SimpleEventEmitter from '../utilities/event-emitter';
@@ -32,15 +33,9 @@ export abstract class BaseWebSocketClient {
   protected connectionState: ConnectionState = ConnectionState.DISCONNECTED;
   protected reconnectAttempts = 0;
   protected connectionTimeout: NodeJS.Timeout | number | null = null;
-
-  // Event emitter for client events
   protected emitter = new SimpleEventEmitter();
-
-  // Managers for different aspects of functionality
   protected messageHandler: MessageHandler;
   protected throttlingManager: ThrottlingManager;
-
-  // Retry configuration
   protected retry: RetryConfig;
 
   /**
@@ -49,29 +44,22 @@ export abstract class BaseWebSocketClient {
    * @param config - The connection configuration including timeouts and retry options
    */
   constructor(baseUrl: string, config?: ConnectionConfig) {
-    // Convert protocol and ensure /ws suffix
     let processedBaseUrl = baseUrl.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://');
     if (!processedBaseUrl.endsWith('/ws')) {
       processedBaseUrl += '/ws';
     }
     this.baseUrl = processedBaseUrl;
-
-    // Initialize retry configuration
     this.retry = {
-      maxAttempts: config?.maxReconnectAttempts || 3,
-      initialDelayMs: config?.initialDelayBetweenReconnects || 1000,
-      maxDelayMs: config?.maxDelayBetweenReconnects || 30000,
+      maxReconnectAttempts: config?.maxReconnectAttempts || 3,
+      initialDelayBetweenReconnects: config?.initialDelayBetweenReconnects || 1000,
+      maxDelayBetweenReconnects: config?.maxDelayBetweenReconnects || 30000,
       jitterMs: 500,
     };
-
-    // Initialize message handler
     this.messageHandler = new MessageHandler();
-
-    // Initialize throttling manager
     this.throttlingManager = new ThrottlingManager(config?.throttling);
-    this.messageHandler.onRequestLimitExceeded(() => {
+    this.messageHandler.onRateLimitExceeded = (_error: HPKVErrorResponse) => {
       this.throttlingManager.notify429();
-    });
+    };
   }
 
   /**
@@ -255,24 +243,19 @@ export abstract class BaseWebSocketClient {
    * @throws ConnectionError if the connection fails or times out
    */
   async connect(): Promise<void> {
-    // Sync connection state first
     this.syncConnectionState();
 
-    // If already connected, resolve immediately
     if (this.connectionState === ConnectionState.CONNECTED && this.isWebSocketOpen()) {
       return;
     }
 
-    // If connection is in progress, return the existing promise
     if (this.connectionState === ConnectionState.CONNECTING && this.connectionPromise) {
       return this.connectionPromise;
     }
 
-    // Start a new connection
     this.connectionState = ConnectionState.CONNECTING;
     this.connectionPromise = new Promise<void>((resolve, reject) => {
       try {
-        // Set up connection timeout
         this.connectionTimeout = setTimeout(() => {
           if (this.connectionState !== ConnectionState.CONNECTED) {
             this.cleanup();
@@ -346,7 +329,6 @@ export abstract class BaseWebSocketClient {
    * @returns A promise that resolves when the connection is closed
    */
   async disconnect(cancelPendingRequests = true): Promise<void> {
-    // Sync connection state first
     this.syncConnectionState();
 
     if (this.connectionState === ConnectionState.DISCONNECTED) {
@@ -385,7 +367,6 @@ export abstract class BaseWebSocketClient {
    * @returns The current connection state
    */
   getConnectionState(): ConnectionState {
-    // Sync connection state before returning
     this.syncConnectionState();
     return this.connectionState;
   }
@@ -395,7 +376,6 @@ export abstract class BaseWebSocketClient {
    * @returns Statistics about the current connection
    */
   getConnectionStats(): ConnectionStats {
-    // Sync connection state first
     this.syncConnectionState();
 
     const throttlingMetrics = this.throttlingManager.getMetrics();
@@ -455,18 +435,18 @@ export abstract class BaseWebSocketClient {
 
     // Calculate delay with exponential backoff and jitter
     const baseDelay = Math.min(
-      this.retry.initialDelayMs * Math.pow(2, this.reconnectAttempts - 1),
-      this.retry.maxDelayMs
+      (this.retry.initialDelayBetweenReconnects as number) *
+        Math.pow(2, this.reconnectAttempts - 1),
+      this.retry.maxDelayBetweenReconnects as number
     );
 
-    // Add jitter to prevent thundering herd problem
     const jitter = this.retry.jitterMs ? Math.floor(Math.random() * this.retry.jitterMs) : 0;
 
     const delay = baseDelay + jitter;
 
     this.emitter.emit('reconnecting', {
       attempt: this.reconnectAttempts,
-      maxAttempts: this.retry.maxAttempts,
+      maxAttempts: this.retry.maxReconnectAttempts,
       delay,
     });
 
@@ -476,15 +456,13 @@ export abstract class BaseWebSocketClient {
       await this.connect();
       this.emitter.emit('reconnected');
     } catch (error) {
-      if (this.reconnectAttempts < this.retry.maxAttempts) {
-        // Try again
+      if ((this.reconnectAttempts as number) < (this.retry.maxReconnectAttempts as number)) {
         return this.reconnect();
       } else {
-        // Give up after max attempts
         const connectionError = new ConnectionError(
           error instanceof Error
-            ? `Connection lost after ${this.retry.maxAttempts} reconnect attempts: ${error.message}`
-            : `Connection lost after ${this.retry.maxAttempts} reconnect attempts`
+            ? `Connection lost after ${this.retry.maxReconnectAttempts} reconnect attempts: ${error.message}`
+            : `Connection lost after ${this.retry.maxReconnectAttempts} reconnect attempts`
         );
 
         this.emitter.emit('reconnectFailed', connectionError);
@@ -539,7 +517,7 @@ export abstract class BaseWebSocketClient {
       return;
     }
 
-    if (this.reconnectAttempts < this.retry.maxAttempts) {
+    if (this.reconnectAttempts < (this.retry.maxReconnectAttempts as number)) {
       this.reconnect().catch(error => {
         this.emitter.emit(
           'error',
@@ -551,7 +529,7 @@ export abstract class BaseWebSocketClient {
     } else {
       // Max reconnect attempts reached
       const connectionError = new ConnectionError(
-        `Connection lost after ${this.retry.maxAttempts} reconnect attempts` +
+        `Connection lost after ${this.retry.maxReconnectAttempts} reconnect attempts` +
           (code ? ` (code: ${code}${reason ? `, reason: ${reason}` : ''})` : '')
       );
 
