@@ -1,17 +1,19 @@
 {
   "name": "@hpkv/websocket-client",
-  "version": "1.2.12",
+  "version": "1.2.13",
   "description": "HPKV WebSocket client for Node.js",
-  "main": "dist/src/index.js",
-  "types": "dist/src/index.d.ts",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/types/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts",
-      "require": "./dist/src/index.js"
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/esm/index.js",
+      "require": "./dist/cjs/index.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc --module commonjs --outDir dist/cjs && tsc --module esnext --outDir dist/esm --declaration false && tsc --module esnext --emitDeclarationOnly --declaration --outDir dist/types",
     "test": "jest --testTimeout=30000 --hookTimeout=30000",
     "prepare": "npm run build",
     "prepublishOnly": "npm test",
@@ -23,7 +25,9 @@
     "check": "npm run lint && npm run format:check && npm run test"
   },
   "files": [
-    "dist/src",
+    "dist/cjs",
+    "dist/esm",
+    "dist/types",
     "README.md",
     "LICENSE"
   ],
@@ -52,6 +56,7 @@
   "engines": {
     "node": ">=16"
   },
+  "sideEffects": false,
   "dependencies": {
     "@types/ws": "^8.5.10",
     "ws": "^8.13.0"
