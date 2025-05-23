@@ -1,5 +1,6 @@
 import { AuthenticationError, HPKVError } from '../websocket/errors';
 import { HPKVTokenConfig } from '../websocket';
+import axios, { AxiosError } from 'axios';
 
 /**
  * WebsocketTokenManager
@@ -33,23 +34,38 @@ export class WebsocketTokenManager {
    * @throws {HPKVError} If token generation fails for other reasons
    */
   async generateToken(config: HPKVTokenConfig): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/token/websocket`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-      },
-      body: JSON.stringify(config),
-    });
-
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
-        throw new AuthenticationError(`Failed to generate token: ${response.statusText}`);
+    try {
+      const response = await axios.post<{ token: string }>(
+        `${this.baseUrl}/token/websocket`,
+        config,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': this.apiKey,
+          },
+        }
+      );
+      return response.data.token;
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const axiosError = error as AxiosError;
+        if (axiosError.response) {
+          const status = axiosError.response.status;
+          const statusText = axiosError.response.statusText || 'Unknown error';
+          if (status === 401 || status === 403) {
+            throw new AuthenticationError(`Failed to generate token: ${status} ${statusText}`);
+          }
+          throw new HPKVError(`Failed to generate token: ${status} ${statusText}`);
+        } else if (axiosError.request) {
+          throw new HPKVError('Failed to generate token: No response from server');
+        } else {
+          throw new HPKVError(`Failed to generate token: ${axiosError.message}`);
+        }
       }
-      throw new HPKVError(`Failed to generate token: ${response.statusText}`);
-    }
 
-    const data = await response.json();
-    return data.token;
+      throw new HPKVError(
+        `Failed to generate token: ${error instanceof Error ? error.message : 'Unknown error'}`
+      );
+    }
   }
 }

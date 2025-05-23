@@ -52,21 +52,6 @@ class SimpleEventEmitter {
     }
     return false;
   }
-
-  /**
-   * Remove all listeners for the specified event, or all events if no event is provided
-   *
-   * @param event - Optional event name. If not provided, all events will be cleared.
-   * @returns The emitter instance for chaining
-   */
-  removeAllListeners(event?: string): this {
-    if (event) {
-      delete this.events[event];
-    } else {
-      this.events = {};
-    }
-    return this;
-  }
 }
 
 export default SimpleEventEmitter;

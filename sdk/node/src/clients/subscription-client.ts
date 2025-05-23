@@ -64,14 +64,18 @@ export class HPKVSubscriptionClient extends BaseWebSocketClient {
    *
    * @param message - The message received from the WebSocket server
    */
-  protected handleMessage(message: HPKVResponse): boolean {
-    let handled = super.handleMessage(message);
-    if (!handled) {
+  protected handleMessage(message: HPKVResponse): void {
+    if (message && 'type' in message && message.type === 'notification') {
+      const notification = message as HPKVNotificationResponse;
       if (this.subscriptions.size > 0) {
-        this.subscriptions.forEach(callback => callback(message as HPKVNotificationResponse));
+        this.subscriptions.forEach(callback => {
+          Promise.resolve().then(() => {
+            callback(notification);
+          });
+        });
       }
-      handled = true;
+    } else {
+      return super.handleMessage(message);
     }
-    return handled;
   }
 }
