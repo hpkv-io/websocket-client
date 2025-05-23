@@ -5,7 +5,7 @@ import { ThrottlingConfig, ThrottlingMetrics } from './types';
  */
 const DEFAULT_THROTTLING: ThrottlingConfig = {
   enabled: true,
-  rateLimit: 10, // Default to 10 requests per second
+  rateLimit: 10,
 };
 
 /**
@@ -68,7 +68,7 @@ export class ThrottlingManager {
    * Notifies the throttler of a 429 error to apply backpressure
    */
   notify429(): void {
-    if (Date.now() < this.backoffUntil) return; // Already in backoff
+    if (Date.now() < this.backoffUntil) return;
 
     this.currentRate = Math.max(
       (this.throttlingConfig.rateLimit || (DEFAULT_THROTTLING.rateLimit as number)) * 0.1,
@@ -90,20 +90,15 @@ export class ThrottlingManager {
     const now = Date.now();
     const minTimeBetweenRequests = 1000 / this.currentRate;
 
-    // Determine the earliest time this request could run
-    // Ensure the next slot isn't before the current time or any backoff period
     const earliestRunTime = Math.max(now, this.nextAvailableSlotTime, this.backoffUntil);
 
     if (earliestRunTime <= now) {
-      // Fast path: Can run immediately without violating rate limit
-      this.nextAvailableSlotTime = now + minTimeBetweenRequests; // Reserve slot for the next one
-      return Promise.resolve(); // Allow request to proceed immediately
+      this.nextAvailableSlotTime = now + minTimeBetweenRequests;
+      return Promise.resolve();
     } else {
-      // Slow path: Must wait for the calculated slot
       return new Promise<void>(resolve => {
-        this.throttleQueue.push(resolve); // Add to the queue
+        this.throttleQueue.push(resolve);
         if (!this.processingQueue) {
-          // Start processing the queue if it wasn't already active
           this.processThrottleQueue();
         }
       });
@@ -122,12 +117,9 @@ export class ThrottlingManager {
     this.processingQueue = true;
     const now = Date.now();
 
-    // Ensure next slot is not in the past relative to now
     this.nextAvailableSlotTime = Math.max(now, this.nextAvailableSlotTime);
 
-    // Check for backoff period
     if (now < this.backoffUntil) {
-      // If backing off, the next available slot should also respect the backoff period
       this.nextAvailableSlotTime = Math.max(this.nextAvailableSlotTime, this.backoffUntil);
 
       const backoffWait = this.nextAvailableSlotTime - now;
@@ -135,21 +127,16 @@ export class ThrottlingManager {
       return;
     }
 
-    const minTimeBetweenRequests = 1000 / this.currentRate; // in ms
+    const minTimeBetweenRequests = 1000 / this.currentRate;
 
-    // Calculate time to wait until the next available slot
     const timeToWait = this.nextAvailableSlotTime - now;
 
-    // Schedule the next request processing
     setTimeout(() => {
-      // Dequeue *before* resolving, in case resolve() triggers another request quickly
       const next = this.throttleQueue.shift();
       if (next) {
-        next(); // Resolve the promise, allowing the request to proceed
+        next();
       }
 
-      // Check if more items are waiting and continue processing
-      // This recursive call ensures the queue keeps moving
       if (this.throttleQueue.length > 0) {
         this.processThrottleQueue();
       } else {
@@ -157,7 +144,6 @@ export class ThrottlingManager {
       }
     }, timeToWait);
 
-    // Increment the next available slot time for the *subsequent* request
     this.nextAvailableSlotTime += minTimeBetweenRequests;
   }
 

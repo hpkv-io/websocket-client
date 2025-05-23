@@ -1,6 +1,7 @@
-import { IWebSocket } from './types';
-import { HPKVNotificationResponse, HPKVBaseResponse } from './types';
 import { WebSocket as NodeWebSocket } from 'ws';
+import { ConnectionError, HPKVError } from './errors';
+import { HPKVNotificationResponse, IWebSocket } from './types';
+import { HPKVBaseResponse } from './types';
 
 /**
  * Creates a WebSocket instance that works with Node.js or browser environments
@@ -9,148 +10,242 @@ import { WebSocket as NodeWebSocket } from 'ws';
  */
 export function createWebSocket(url: string): IWebSocket {
   let browserWebSocketConstructor: typeof WebSocket | null = null;
-  if (typeof global !== 'undefined' && typeof global.WebSocket === 'function') {
-    browserWebSocketConstructor = global.WebSocket;
-  } else if (typeof window !== 'undefined' && typeof window.WebSocket === 'function') {
+
+  if (typeof window !== 'undefined' && typeof window.WebSocket === 'function') {
     browserWebSocketConstructor = window.WebSocket;
   } else if (typeof self !== 'undefined' && typeof self.WebSocket === 'function') {
+    // Check for Web Worker environments or other self-scoped environments
     browserWebSocketConstructor = self.WebSocket;
+  } else if (typeof global !== 'undefined' && typeof global.WebSocket === 'function') {
+    browserWebSocketConstructor = global.WebSocket;
   }
 
   if (browserWebSocketConstructor) {
-    // Browser environment
     return createBrowserWebSocket(url, browserWebSocketConstructor);
-  } else {
-    // Node.js environment
+  } else if (typeof NodeWebSocket !== 'undefined') {
     return createNodeWebSocket(url);
+  } else {
+    throw new HPKVError('No suitable WebSocket implementation found.');
   }
 }
 
 /**
  * Creates a WebSocket instance for browser environments
- * @param url - The WebSocket URL to connect to
- * @param WebSocketClass - The WebSocket constructor to use
- * @returns A WebSocket instance with normalized interface
  */
-export function createBrowserWebSocket(
-  url: string,
-  WebSocketClass: typeof WebSocket = WebSocket
-): IWebSocket {
+export function createBrowserWebSocket(url: string, WebSocketClass: typeof WebSocket): IWebSocket {
   const ws = new WebSocketClass(url);
+
+  // Store pairs of { original: Function, wrapper: Function }
+  const internalListeners = {} as {
+    [key: string]: { original: (...args: any[]) => void; wrapper: (...args: any[]) => void }[];
+  };
 
   return {
     get readyState(): number {
       return ws.readyState;
     },
+
     on(event: string, listener: (...args: any[]) => void): IWebSocket {
-      if (event === 'open') {
-        ws.onopen = listener;
-      } else if (event === 'message') {
-        ws.onmessage = event => {
-          try {
-            // If the data is already an object (happens in some browsers), don't parse it
-            const data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-            listener(data);
-          } catch (e) {
-            // If parsing fails, pass the raw data
-            if (e instanceof SyntaxError) {
-              listener(event.data);
+      let eventHandler: (...args: any[]) => void;
+
+      switch (event) {
+        case 'open':
+          eventHandler = (_nativeEvent: Event): void => listener();
+          break;
+        case 'message':
+          eventHandler = (nativeEvent: MessageEvent): void => {
+            try {
+              const data =
+                typeof nativeEvent.data === 'string'
+                  ? JSON.parse(nativeEvent.data)
+                  : nativeEvent.data;
+              listener(data);
+            } catch (e) {
+              if (e instanceof SyntaxError) {
+                listener(nativeEvent.data); // Fallback with raw data
+              } else {
+                console.error(
+                  '[HPKV Websocket Client] createBrowserWebSocket: Error processing "message" or in listener callback:',
+                  e
+                );
+              }
             }
-          }
-        };
-      } else if (event === 'close') {
-        ws.onclose = event => {
-          listener(event.code, event.reason);
-        };
-      } else if (event === 'error') {
-        ws.onerror = listener;
+          };
+          break;
+        case 'close':
+          eventHandler = (nativeEvent: CloseEvent): void =>
+            listener(nativeEvent?.code, nativeEvent?.reason);
+          break;
+        case 'error':
+          eventHandler = (nativeEvent: Event): void => listener(nativeEvent);
+          break;
+        default:
+          throw new Error(
+            `[HPKV Websocket Client] createBrowserWebSocket: Attaching direct listener for unhandled event type "${event}"`
+          );
+      }
+
+      ws.addEventListener(event, eventHandler as EventListener);
+      internalListeners[event] = internalListeners[event] || [];
+      internalListeners[event].push({ original: listener, wrapper: eventHandler });
+      return this;
+    },
+
+    removeAllListeners(): IWebSocket {
+      Object.keys(internalListeners).forEach(event => {
+        internalListeners[event].forEach(listenerPair => {
+          ws.removeEventListener(event, listenerPair.wrapper as EventListener);
+        });
+        delete internalListeners[event];
+      });
+      return this;
+    },
+
+    removeListener(event: string, listener: (...args: any[]) => void): IWebSocket {
+      if (!internalListeners[event]) {
+        return this;
+      }
+
+      const listenerIndex = internalListeners[event].findIndex(
+        listenerPair => listenerPair.original === listener
+      );
+
+      if (listenerIndex !== -1) {
+        const { wrapper } = internalListeners[event][listenerIndex];
+        ws.removeEventListener(event, wrapper as EventListener);
+        internalListeners[event].splice(listenerIndex, 1);
+        if (internalListeners[event].length === 0) {
+          delete internalListeners[event];
+        }
       }
       return this;
     },
-    removeAllListeners(): IWebSocket {
-      ws.onopen = null;
-      ws.onmessage = null;
-      ws.onclose = null;
-      ws.onerror = null;
-      return this;
-    },
+
     send(data: string): void {
       ws.send(data);
     },
-    close(): void {
-      ws.close();
+
+    close(code?: number, reason?: string): void {
+      ws.close(code, reason);
     },
   };
 }
 
 /**
  * Creates a WebSocket instance for Node.js environments
- * @param url - The WebSocket URL to connect to
- * @returns A WebSocket instance with normalized interface
  */
 export function createNodeWebSocket(url: string): IWebSocket {
-  // Dynamically import WebSocket for Node.js to avoid issues in browser environments
   try {
     const ws = new NodeWebSocket(url);
+
+    const internalListeners = {} as {
+      [key: string]: { original: (...args: any[]) => void; wrapper: (...args: any[]) => void }[];
+    };
 
     return {
       get readyState(): number {
         return ws.readyState;
       },
+
       on(event: string, listener: (...args: any[]) => void): IWebSocket {
-        if (event === 'message') {
-          ws.on(event, (data: Buffer | string | object) => {
-            try {
-              // Handle different data types
-              let jsonData;
+        let nodeEventHandler: (...args: any[]) => void;
 
-              if (typeof data === 'object' && !Buffer.isBuffer(data)) {
-                // Already an object, no need to parse
-                jsonData = data;
-              } else if (Buffer.isBuffer(data) || typeof data === 'string') {
-                // Parse buffer or string
-                const stringData = Buffer.isBuffer(data) ? data.toString() : data;
-                jsonData = JSON.parse(stringData);
-              } else {
-                // Unknown type, just pass it through
-                listener(data);
-                return;
-              }
+        switch (event) {
+          case 'open':
+            nodeEventHandler = (): void => listener();
+            break;
+          case 'message':
+            nodeEventHandler = (rawData: Buffer | string | object) => {
+              try {
+                let jsonData;
+                if (typeof rawData === 'object' && !Buffer.isBuffer(rawData)) {
+                  jsonData = rawData;
+                } else if (Buffer.isBuffer(rawData) || typeof rawData === 'string') {
+                  const stringData = Buffer.isBuffer(rawData) ? rawData.toString('utf8') : rawData;
+                  jsonData = JSON.parse(stringData);
+                } else {
+                  listener(rawData);
+                  return;
+                }
 
-              // Check if this is a notification or a regular response
-              if ('type' in jsonData && jsonData.type === 'notification') {
-                // Handle as notification response
-                listener(jsonData as HPKVNotificationResponse);
-              } else {
-                // Handle as base response
-                listener(jsonData as HPKVBaseResponse);
+                if ('type' in jsonData && jsonData.type === 'notification') {
+                  listener(jsonData as HPKVNotificationResponse);
+                } else {
+                  listener(jsonData as HPKVBaseResponse);
+                }
+              } catch (e) {
+                if (e instanceof SyntaxError) {
+                  if (Buffer.isBuffer(rawData)) {
+                    listener(rawData.toString('utf8'));
+                  } else {
+                    listener(rawData);
+                  }
+                } else {
+                  throw e;
+                }
               }
-            } catch (e) {
-              // If parsing fails, just pass the raw data
-              if (e instanceof SyntaxError && Buffer.isBuffer(data)) {
-                listener(data.toString());
-              } else {
-                listener(data);
-              }
-            }
-          });
-        } else {
-          ws.on(event, listener);
+            };
+            break;
+          case 'close':
+            nodeEventHandler = (code: number, reasonBuffer: Buffer): void => {
+              const reason = reasonBuffer ? reasonBuffer.toString('utf8') : '';
+              listener(code, reason);
+            };
+            break;
+          case 'error':
+            nodeEventHandler = (error: Error): void => listener(error);
+            break;
+          default:
+            throw new HPKVError(
+              `Attaching direct listener for unhandled websocket event type "${event}"`
+            );
+        }
+
+        ws.on(event, nodeEventHandler);
+        internalListeners[event] = internalListeners[event] || [];
+        internalListeners[event].push({ original: listener, wrapper: nodeEventHandler });
+        return this;
+      },
+
+      removeAllListeners(): IWebSocket {
+        ws.removeAllListeners();
+        Object.keys(internalListeners).forEach(event => {
+          delete internalListeners[event];
+        });
+
+        return this;
+      },
+
+      removeListener(event: string, listener: (...args: any[]) => void): IWebSocket {
+        if (!internalListeners[event]) {
+          return this;
+        }
+        const listenerIndex = internalListeners[event].findIndex(
+          listenerPair => listenerPair.original === listener
+        );
+
+        if (listenerIndex !== -1) {
+          const { wrapper } = internalListeners[event][listenerIndex];
+          ws.removeListener(event, wrapper);
+          internalListeners[event].splice(listenerIndex, 1);
+          if (internalListeners[event].length === 0) {
+            delete internalListeners[event];
+          }
         }
         return this;
       },
-      removeAllListeners(): IWebSocket {
-        ws.removeAllListeners();
-        return this;
-      },
+
       send(data: string): void {
         ws.send(data);
       },
-      close(): void {
-        ws.close();
+
+      close(code?: number, reason?: string): void {
+        ws.close(code, reason);
       },
     };
   } catch (error) {
-    throw new Error(`Failed to initialize WebSocket: ${error}`);
+    throw new ConnectionError(
+      `Failed to initialize WebSocket for Node.js: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
