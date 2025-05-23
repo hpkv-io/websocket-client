@@ -1,7 +1,13 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * @jest-environment node
+ */
 /// <reference types="jest" />
-import { HPKVClientFactory, HPKVError } from '../src';
-import { HPKVApiClient } from '../src/clients/api-client';
+
+import { ConnectionError, HPKVClientFactory, HPKVError } from '../../src';
+import { HPKVApiClient } from '../../src/clients/api-client';
 import dotenv from 'dotenv';
+import { jest, expect, describe, it, beforeAll, afterAll } from '@jest/globals';
 
 dotenv.config();
 
@@ -10,37 +16,32 @@ const BASE_URL = process.env.HPKV_API_BASE_URL || '';
 const TEST_KEY_PREFIX = 'api-test-';
 
 describe('HPKVApiClient Integration Tests', () => {
-  let apiClient: HPKVApiClient;
   const keysToCleanup: string[] = [];
-
-  // Helper to generate unique test keys
   function generateTestKey(testName: string): string {
     const key = `${TEST_KEY_PREFIX}${testName}-${Date.now()}`;
     keysToCleanup.push(key);
     return key;
   }
 
+  let originalWebSocket: typeof global.WebSocket;
+
   beforeAll(() => {
-    apiClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
-      throttling: {
-        enabled: true,
-        rateLimit: 10,
-      },
-    });
+    // Set global.WebSocket to undefined to force the use of the Node.js WebSocket implementation
+    originalWebSocket = global.WebSocket;
+    global.WebSocket = undefined as unknown as typeof global.WebSocket;
   });
 
   afterAll(async () => {
+    const cleanupClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
+      throttling: { enabled: true, rateLimit: 30 },
+    });
     try {
-      // Ensure we're connected for cleanup
-      await apiClient.connect();
+      await cleanupClient.connect();
 
-      // Clean up all keys created during tests
       for (const key of keysToCleanup) {
         try {
-          // Try to delete the key directly - if it doesn't exist, that's fine
-          await apiClient.delete(key);
+          await cleanupClient.delete(key);
         } catch (error) {
-          // Only log non-"Record not found" errors as actual issues
           const errorMessage = error instanceof Error ? error.message : String(error);
           if (!errorMessage.includes('Record not found')) {
             console.error(`Failed to clean up key ${key}:`, error);
@@ -50,15 +51,28 @@ describe('HPKVApiClient Integration Tests', () => {
     } catch (error) {
       console.error('Error during test cleanup:', error);
     } finally {
-      await apiClient.disconnect();
-      apiClient.destroy();
+      await cleanupClient.disconnect();
+      cleanupClient.destroy();
     }
+
+    global.WebSocket = originalWebSocket;
   });
 
   describe('Connection Management', () => {
     it('should connect successfully', async () => {
       const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
       await client.connect();
+      expect(client.getConnectionStats().isConnected).toBe(true);
+      await client.disconnect();
+      client.destroy();
+    });
+
+    it('should handle multiple concurrent connect attempts', async () => {
+      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+      const connectPromise = client.connect();
+      const connectPromise2 = client.connect();
+      await connectPromise;
+      await connectPromise2;
       expect(client.getConnectionStats().isConnected).toBe(true);
       await client.disconnect();
       client.destroy();
@@ -71,12 +85,47 @@ describe('HPKVApiClient Integration Tests', () => {
       expect(client.getConnectionStats().isConnected).toBe(false);
       client.destroy();
     });
+
+    it('should handle multiple concurrent disconnect attempts', async () => {
+      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+      await client.connect();
+      const disconnectPromise = client.disconnect();
+      const disconnectPromise2 = client.disconnect();
+      await disconnectPromise;
+      await disconnectPromise2;
+      expect(client.getConnectionStats().isConnected).toBe(false);
+      client.destroy();
+    });
+
+    it('should invoke connect and disconnect event handlers when connection state changes', async () => {
+      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+      const onConnected = jest.fn();
+      const onDisconnected = jest.fn();
+      client.on('connected', onConnected);
+      await client.connect();
+      expect(onConnected).toHaveBeenCalled();
+      client.on('disconnected', onDisconnected);
+      await client.disconnect();
+      expect(onDisconnected).toHaveBeenCalled();
+      client.destroy();
+    });
+
+    it('should invoke error event handler when connection fails', async () => {
+      const client = HPKVClientFactory.createApiClient(API_KEY, 'invalid-url');
+      const onError = jest.fn();
+      client.on('error', onError);
+      await expect(client.connect()).rejects.toThrow(ConnectionError);
+      expect(onError).toHaveBeenCalled();
+      client.destroy();
+    });
   });
 
   describe('CRUD Operations', () => {
     let client: HPKVApiClient;
     beforeAll(async () => {
-      client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
+      client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
+        throttling: { enabled: true, rateLimit: 30 },
+      });
       await client.connect();
     });
     afterAll(async () => {
@@ -86,85 +135,84 @@ describe('HPKVApiClient Integration Tests', () => {
     it('should set and get a value', async () => {
       const testKey = generateTestKey('set-get');
       const testValue = 'set-get-test-value';
-      // Set a value
+
       const setResponse = await client.set(testKey, testValue);
       expect(setResponse.success).toBe(true);
       expect(setResponse.code).toBe(200);
 
-      // Get the value
       const getResponse = await client.get(testKey);
       expect(getResponse.code).toBe(200);
       expect(getResponse.value).toBe(testValue);
     });
 
+    it('should allow setting an object as a value', async () => {
+      const testKey = generateTestKey('set-object');
+      const testValue = { name: 'test', value: 123 };
+      const setResponse = await client.set(testKey, testValue);
+      expect(setResponse.success).toBe(true);
+      expect(setResponse.code).toBe(200);
+
+      const getResponse = await client.get(testKey);
+      expect(getResponse.code).toBe(200);
+      expect(JSON.parse(getResponse.value as string).name).toBe('test');
+      expect(JSON.parse(getResponse.value as string).value).toBe(123);
+    });
+
     it('should delete a value', async () => {
       const testKey = generateTestKey('delete');
       const testValue = 'delete-test-value';
-      // First ensure the key exists
       await client.set(testKey, testValue);
 
-      // Delete the value
       const deleteResponse = await client.delete(testKey);
       expect(deleteResponse.success).toBe(true);
       expect(deleteResponse.code).toBe(200);
 
-      // Verify it's deleted - should throw an error
-      try {
-        await client.get(testKey);
-        fail('Expected an error to be thrown when getting a deleted key');
-      } catch (error) {
-        expect((error as HPKVError).code).toBe(404);
-      }
+      await expect(client.get(testKey)).rejects.toThrow(HPKVError);
+      await expect(client.get(testKey)).rejects.toHaveProperty('code', 404);
     });
 
     it('should patch a value', async () => {
       const testKey = generateTestKey('patch');
       const initialValue = { name: 'test', value: 123 };
-      const patchValue = { value: 456 };
-      // Set initial value
+      const patchValue = { value: 456, newField: 'new-field' };
       await client.set(testKey, initialValue);
 
-      // Patch the value
       const patchResponse = await client.set(testKey, patchValue, true);
       expect(patchResponse.code).toBe(200);
       expect(patchResponse.success).toBe(true);
 
-      // Verify the patched value
       const getResponse = await client.get(testKey);
       expect(getResponse.code).toBe(200);
       expect(JSON.parse(getResponse.value as string).name).toBe('test');
       expect(JSON.parse(getResponse.value as string).value).toBe(456);
+      expect(JSON.parse(getResponse.value as string).newField).toBe('new-field');
     });
 
     it('should perform range queries', async () => {
-      const keyPrefix = generateTestKey('range');
-      // Set multiple values with sequential keys
+      const keyPrefix = 'testing-range';
+
       await client.set(`${keyPrefix}-1`, 'value1');
       await client.set(`${keyPrefix}-2`, 'value2');
       await client.set(`${keyPrefix}-3`, 'value3');
-
-      // Add these keys to cleanup
       keysToCleanup.push(`${keyPrefix}-1`, `${keyPrefix}-2`, `${keyPrefix}-3`);
 
-      // Query the range
       const rangeResponse = await client.range(`${keyPrefix}-1`, `${keyPrefix}-3`);
 
       expect(rangeResponse.code).toBe(200);
       expect(Array.isArray(rangeResponse.records)).toBe(true);
       expect(rangeResponse.records?.length).toBe(3);
+      expect(rangeResponse.records?.[0].key).toBe(`${keyPrefix}-1`);
+      expect(rangeResponse.records?.[1].key).toBe(`${keyPrefix}-2`);
+      expect(rangeResponse.records?.[2].key).toBe(`${keyPrefix}-3`);
     });
 
     it('should limit range query results when limit is provided', async () => {
-      const keyPrefix = generateTestKey('range-limit');
-      // Set multiple values with sequential keys
+      const keyPrefix = 'testing-range-limit';
       await client.set(`${keyPrefix}-1`, 'value1');
       await client.set(`${keyPrefix}-2`, 'value2');
       await client.set(`${keyPrefix}-3`, 'value3');
-
-      // Add these keys to cleanup
       keysToCleanup.push(`${keyPrefix}-1`, `${keyPrefix}-2`, `${keyPrefix}-3`);
 
-      // Query the range with limit
       const rangeResponse = await client.range(`${keyPrefix}-1`, `${keyPrefix}-3`, { limit: 2 });
 
       expect(rangeResponse.code).toBe(200);
@@ -174,14 +222,15 @@ describe('HPKVApiClient Integration Tests', () => {
 
     it('should perform atomic increment', async () => {
       const counterKey = generateTestKey('atomic-increment');
-      await client.set(counterKey, '0');
 
-      const incrementResponse = await client.atomicIncrement(counterKey, 1);
+      let incrementResponse = await client.atomicIncrement(counterKey, 1);
       expect(incrementResponse.code).toBe(200);
-
-      const getResponse = await client.get(counterKey);
-      expect(getResponse.code).toBe(200);
-      expect(parseInt(getResponse.value as string)).toBe(1);
+      expect(incrementResponse.success).toBe(true);
+      expect(incrementResponse.newValue).toBe(1);
+      incrementResponse = await client.atomicIncrement(counterKey, 5);
+      expect(incrementResponse.code).toBe(200);
+      expect(incrementResponse.success).toBe(true);
+      expect(incrementResponse.newValue).toBe(6);
     });
   });
 
@@ -197,46 +246,24 @@ describe('HPKVApiClient Integration Tests', () => {
     });
     it('should throw not found error when getting non-existent keys', async () => {
       const nonExistentKey = generateTestKey('non-existent');
-      try {
-        await client.get(nonExistentKey);
-        fail('Expected an error to be thrown when getting a non-existent key');
-      } catch (error) {
-        expect(error).toBeInstanceOf(HPKVError);
-        expect((error as HPKVError).code).toBe(404);
-      }
+      await expect(client.get(nonExistentKey)).rejects.toThrow(HPKVError);
+      await expect(client.get(nonExistentKey)).rejects.toHaveProperty('code', 404);
     });
 
     it('should throw not founderror when deleting non-existent keys', async () => {
       const nonExistentKey = generateTestKey('non-existent');
-      try {
-        await client.delete(nonExistentKey);
-        fail('Expected an error to be thrown when deleting a non-existent key');
-      } catch (error) {
-        expect(error).toBeInstanceOf(HPKVError);
-        expect((error as HPKVError).code).toBe(404);
-      }
+      await expect(client.delete(nonExistentKey)).rejects.toThrow(HPKVError);
+      await expect(client.delete(nonExistentKey)).rejects.toHaveProperty('code', 404);
     });
 
     it('should throw 400 error when using empty key', async () => {
-      try {
-        // Attempt to use invalid key format
-        await client.set('', 'value');
-        fail('Expected an error but none was thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(HPKVError);
-        expect((error as HPKVError).code).toBe(400);
-      }
+      await expect(client.set('', 'value')).rejects.toThrow(HPKVError);
+      await expect(client.set('', 'value')).rejects.toHaveProperty('code', 400);
     });
     it('should throw 400 error when using empty value', async () => {
-      try {
-        const testKey = generateTestKey('empty-value');
-        // Attempt to use invalid key format
-        await client.set(testKey, '');
-        fail('Expected an error but none was thrown');
-      } catch (error) {
-        expect(error).toBeInstanceOf(HPKVError);
-        expect((error as HPKVError).code).toBe(400);
-      }
+      const testKey = generateTestKey('empty-value');
+      await expect(client.set(testKey, '')).rejects.toThrow(HPKVError);
+      await expect(client.set(testKey, '')).rejects.toHaveProperty('code', 400);
     });
     it('should throw connection error when client is not connected', async () => {
       const disconnectedClient = HPKVClientFactory.createApiClient(API_KEY, BASE_URL);
@@ -250,8 +277,7 @@ describe('HPKVApiClient Integration Tests', () => {
 
   describe('Throttling', () => {
     it('should respect rate limits when throttling is enabled', async () => {
-      // Create a client with a low rate limit for testing
-      const rateLimit = 3; // 3 requests per second
+      const rateLimit = 3;
       const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
         throttling: {
           enabled: true,
@@ -318,7 +344,6 @@ describe('HPKVApiClient Integration Tests', () => {
     });
 
     it('should not throttle when throttling is disabled', async () => {
-      // Create a client with throttling disabled
       const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
         throttling: {
           enabled: false,
@@ -369,5 +394,109 @@ describe('HPKVApiClient Integration Tests', () => {
         client.destroy();
       }
     });
+  });
+
+  describe('Reconnection Handling', () => {
+    it('should attempt to reconnect and succeed after an unexpected disconnection', async () => {
+      const client = HPKVClientFactory.createApiClient(API_KEY, BASE_URL, {
+        maxReconnectAttempts: 3,
+        initialDelayBetweenReconnects: 200,
+        maxDelayBetweenReconnects: 1000,
+      });
+
+      try {
+        const onReconnecting = jest.fn();
+        const onConnected = jest.fn();
+        const onDisconnected = jest.fn();
+        const onReconnectFailed = jest.fn();
+
+        client.on('reconnecting', onReconnecting);
+        client.on('connected', onConnected);
+        client.on('disconnected', onDisconnected);
+        client.on('reconnectFailed', onReconnectFailed);
+
+        await client.connect();
+        expect(client.getConnectionStats().isConnected).toBe(true);
+        const initialConnectionEventCount = onConnected.mock.calls.length;
+        expect(initialConnectionEventCount).toBe(1);
+
+        const internalWs = (client as unknown as { ws: import('ws').WebSocket }).ws as
+          | import('ws').WebSocket
+          | null;
+        if (internalWs) {
+          const rawSocket = (internalWs as any)._socket || (internalWs as any).socket || internalWs;
+          if (rawSocket && typeof rawSocket.terminate === 'function') {
+            rawSocket.terminate();
+          } else if (typeof internalWs.close === 'function') {
+            internalWs.close(1002, 'Test-induced abrupt disconnect');
+          } else {
+            throw new Error(
+              'Client internal WebSocket instance not found or no means to close/terminate.'
+            );
+          }
+        } else {
+          throw new Error('Client internal NodeWebSocket adapter not found.');
+        }
+
+        await new Promise<void>((resolve, reject) => {
+          const checkEvents = (): void => {
+            if (onDisconnected.mock.calls.length > 0 && onReconnecting.mock.calls.length > 0) {
+              resolve();
+            } else if (onReconnectFailed.mock.calls.length > 0) {
+              reject(
+                new Error('Reconnect failed prematurely while waiting for reconnecting event.')
+              );
+            }
+          };
+
+          client.on('disconnected', checkEvents);
+          client.on('reconnecting', checkEvents);
+          client.on('reconnectFailed', checkEvents);
+
+          setTimeout(
+            () => reject(new Error('Timeout waiting for disconnected/reconnecting events.')),
+            3000
+          );
+          checkEvents();
+        });
+
+        expect(onDisconnected).toHaveBeenCalled();
+        expect(onReconnecting).toHaveBeenCalled();
+
+        await new Promise<void>((resolve, reject) => {
+          const checkReconnected = (): void => {
+            if (onConnected.mock.calls.length > initialConnectionEventCount) {
+              resolve();
+            } else if (onReconnectFailed.mock.calls.length > 0) {
+              reject(new Error('Reconnect failed while waiting for re-established connection.'));
+            }
+          };
+
+          client.on('connected', checkReconnected);
+          client.on('reconnectFailed', checkReconnected);
+
+          setTimeout(
+            () => reject(new Error('Timeout waiting for re-established connection.')),
+            10000
+          );
+          checkReconnected();
+        });
+
+        expect(onConnected.mock.calls.length).toBeGreaterThan(initialConnectionEventCount);
+        expect(client.getConnectionStats().isConnected).toBe(true);
+        expect(onReconnectFailed).not.toHaveBeenCalled();
+
+        const testKey = generateTestKey('reconnect-op');
+        const testValue = 'reconnect-op-value';
+        const setResponse = await client.set(testKey, testValue);
+        expect(setResponse.success).toBe(true);
+        expect(setResponse.code).toBe(200);
+      } finally {
+        if (client) {
+          await client.disconnect();
+          client.destroy();
+        }
+      }
+    }, 20000);
   });
 });

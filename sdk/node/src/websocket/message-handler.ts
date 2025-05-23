@@ -1,20 +1,13 @@
-import {
-  HPKVRequestMessage,
-  HPKVResponse,
-  HPKVErrorResponse,
-  HPKVBaseResponse,
-  HPKVNotificationResponse,
-} from './types';
+import { HPKVRequestMessage, HPKVResponse, HPKVErrorResponse, HPKVBaseResponse } from './types';
 import { HPKVError, TimeoutError } from './errors';
 import { PendingRequest } from './types';
 
 /**
  * Defines default timeout values in milliseconds
  */
-export const DEFAULT_TIMEOUTS = {
-  CONNECTION: 30000, // 30 seconds for connection
-  OPERATION: 10000, // 10 seconds for operations
-  CLEANUP: 60000, // 60 seconds for stale request cleanup
+const DEFAULT_TIMEOUTS = {
+  OPERATION: 10000,
+  CLEANUP: 60000,
 } as const;
 
 /**
@@ -47,10 +40,7 @@ export class MessageHandler {
    * Initializes the cleanup interval for stale requests
    */
   private initCleanupInterval(): void {
-    // Clear any existing interval first
     this.clearCleanupInterval();
-
-    // Set up a new cleanup interval
     this.cleanupInterval = setInterval(() => this.cleanupStaleRequests(), this.timeouts.CLEANUP);
   }
 
@@ -69,7 +59,6 @@ export class MessageHandler {
    * @returns A safe message ID number
    */
   getNextMessageId(): number {
-    // Reset messageId if it approaches MAX_SAFE_INTEGER to prevent overflow
     if (this.messageId >= Number.MAX_SAFE_INTEGER - 1000) {
       this.messageId = 0;
     }
@@ -114,7 +103,6 @@ export class MessageHandler {
       reject = rej;
     });
 
-    // Set up message timeout
     const timer = setTimeout(() => {
       if (this.messageMap.has(messageId)) {
         this.messageMap.delete(messageId);
@@ -122,7 +110,6 @@ export class MessageHandler {
       }
     }, actualTimeoutMs);
 
-    // Store the promise in the map
     this.messageMap.set(messageId, {
       resolve,
       reject,
@@ -147,57 +134,45 @@ export class MessageHandler {
    * @param message - The message received from the WebSocket server
    * @returns True if the message was handled, false if no matching request was found
    */
-  handleMessage(message: HPKVResponse): boolean {
-    // Handle notification messages differently
-    if (this.isNotification(message)) {
-      // Notification responses are handled by event listeners, not by pending requests
-      return false;
-    }
-
-    // For other responses, we need a messageId
+  handleMessage(message: HPKVResponse): void {
     const baseMessage = message as HPKVBaseResponse;
     const messageId = baseMessage.messageId;
 
     if (!messageId) {
-      return false;
+      return;
     }
 
     const pendingRequest = this.messageMap.get(messageId);
     if (!pendingRequest) {
       // This might happen if a request timed out but the server still responded
-      return false;
+      return;
     }
 
-    // Clean up the request
-    clearTimeout(pendingRequest.timer as NodeJS.Timeout);
-    this.messageMap.delete(messageId);
-
-    // Handle error responses
-    if (
-      this.isErrorResponse(message) ||
-      (baseMessage.code !== 200 && baseMessage.code !== undefined)
-    ) {
-      if (message.code === 429) {
-        this.onRateLimitExceeded?.(message as HPKVErrorResponse);
-      }
+    if (baseMessage.code === 200) {
+      pendingRequest.resolve(message);
+    } else {
+      Promise.resolve().then(() => {
+        if ('code' in message && message.code === 429) {
+          this.onRateLimitExceeded?.(message as HPKVErrorResponse);
+        }
+      });
       pendingRequest.reject(
         new HPKVError(
-          this.isErrorResponse(message) ? message.error : baseMessage.message || 'Unknown error',
+          baseMessage.error || baseMessage.message || 'Unknown error',
           baseMessage.code || 500
         )
       );
-      return true;
     }
-
-    // Handle successful responses
-    pendingRequest.resolve(message);
-    return true;
+    clearTimeout(pendingRequest.timer as NodeJS.Timeout);
+    this.messageMap.delete(messageId);
   }
 
   /**
    * Type guard to check if a response is a notification
    */
-  private isNotification(message: HPKVResponse): message is HPKVNotificationResponse {
+  private isNotification(
+    message: HPKVResponse
+  ): message is import('./types').HPKVNotificationResponse {
     return 'type' in message && message.type === 'notification';
   }
 
@@ -213,7 +188,6 @@ export class MessageHandler {
    * @param error - The error to reject pending requests with
    */
   cancelAllRequests(error: Error): void {
-    // Reject all pending messages
     for (const [id, request] of this.messageMap.entries()) {
       clearTimeout(request.timer as NodeJS.Timeout);
       request.reject(error);
@@ -226,7 +200,7 @@ export class MessageHandler {
    */
   protected cleanupStaleRequests(): void {
     const now = Date.now();
-    const staleThreshold = this.timeouts.OPERATION * 3; // 3x the operation timeout
+    const staleThreshold = this.timeouts.OPERATION * 3;
 
     for (const [id, request] of this.messageMap.entries()) {
       const age = now - request.timestamp;

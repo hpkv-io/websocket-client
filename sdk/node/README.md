@@ -321,6 +321,7 @@ Configuration options for the WebSocket connection.
 | `maxReconnectAttempts` | `number` | Maximum number of reconnection attempts |
 | `initialDelayBetweenReconnects` | `number` | Initial delay between reconnection attempts (ms) |
 | `maxDelayBetweenReconnects` | `number` | Maximum delay between reconnection attempts (ms) |
+| `connectionTimeout` | `number` | Timeout for connection attempts (ms) |
 | `throttling` | `ThrottlingConfig` | Configuration for request throttling |
 
 #### `ThrottlingConfig`

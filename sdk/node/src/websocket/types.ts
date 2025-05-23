@@ -4,9 +4,10 @@
 export interface IWebSocket {
   readyState: number;
   on(event: string, listener: (...args: any[]) => void): IWebSocket;
+  removeListener(event: string, listener: (...args: any[]) => void): IWebSocket;
   removeAllListeners(): IWebSocket;
   send(data: string): void;
-  close(): void;
+  close(code?: number, reason?: string): void;
 }
 
 /**
@@ -27,6 +28,7 @@ export enum ConnectionState {
   CONNECTING = 'CONNECTING',
   CONNECTED = 'CONNECTED',
   DISCONNECTING = 'DISCONNECTING',
+  RECONNECTING = 'RECONNECTING',
 }
 
 /**
@@ -65,6 +67,8 @@ export interface ThrottlingMetrics {
 export interface ConnectionConfig extends RetryConfig {
   /** Configuration for the throttling mechanism */
   throttling?: ThrottlingConfig;
+  /** Client-side timeout in milliseconds for establishing the WebSocket connection */
+  connectionTimeout?: number;
 }
 
 /**
