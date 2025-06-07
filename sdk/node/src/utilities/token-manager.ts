@@ -1,6 +1,6 @@
 import { AuthenticationError, HPKVError } from '../websocket/errors';
 import { HPKVTokenConfig } from '../websocket';
-import axios, { AxiosError } from 'axios';
+import fetch from 'cross-fetch';
 
 /**
  * WebsocketTokenManager
@@ -35,32 +35,34 @@ export class WebsocketTokenManager {
    */
   async generateToken(config: HPKVTokenConfig): Promise<string> {
     try {
-      const response = await axios.post<{ token: string }>(
-        `${this.baseUrl}/token/websocket`,
-        config,
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': this.apiKey,
-          },
+      const response = await fetch(`${this.baseUrl}/token/websocket`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+        },
+        body: JSON.stringify(config),
+      });
+
+      if (!response.ok) {
+        const status = response.status;
+        const statusText = response.statusText || 'Unknown error';
+        if (status === 401 || status === 403) {
+          throw new AuthenticationError(`Failed to generate token: ${status} ${statusText}`);
         }
-      );
-      return response.data.token;
+        throw new HPKVError(`Failed to generate token: ${status} ${statusText}`);
+      }
+
+      const data = (await response.json()) as { token: string };
+      return data.token;
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const axiosError = error as AxiosError;
-        if (axiosError.response) {
-          const status = axiosError.response.status;
-          const statusText = axiosError.response.statusText || 'Unknown error';
-          if (status === 401 || status === 403) {
-            throw new AuthenticationError(`Failed to generate token: ${status} ${statusText}`);
-          }
-          throw new HPKVError(`Failed to generate token: ${status} ${statusText}`);
-        } else if (axiosError.request) {
-          throw new HPKVError('Failed to generate token: No response from server');
-        } else {
-          throw new HPKVError(`Failed to generate token: ${axiosError.message}`);
-        }
+      if (error instanceof AuthenticationError || error instanceof HPKVError) {
+        throw error;
+      }
+
+      // Handle network errors or JSON parsing errors
+      if (error instanceof TypeError) {
+        throw new HPKVError('Failed to generate token: No response from server');
       }
 
       throw new HPKVError(
