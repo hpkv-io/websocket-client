@@ -1,6 +1,14 @@
 import { AuthenticationError, HPKVError } from '../websocket/errors';
 import { HPKVTokenConfig } from '../websocket';
-import fetch from 'cross-fetch';
+import crossFetch from 'cross-fetch';
+
+const getFetch = (): typeof fetch => {
+  if (typeof globalThis !== 'undefined' && globalThis.fetch) {
+    return globalThis.fetch;
+  }
+
+  return crossFetch;
+};
 
 /**
  * WebsocketTokenManager
@@ -11,6 +19,7 @@ import fetch from 'cross-fetch';
 export class WebsocketTokenManager {
   private apiKey: string;
   private baseUrl: string;
+  private fetchFn: typeof fetch;
 
   constructor(apiKey: string, baseUrl: string) {
     if (!apiKey) {
@@ -21,8 +30,8 @@ export class WebsocketTokenManager {
     }
 
     this.apiKey = apiKey;
-    // Convert WebSocket URLs to HTTP URLs and remove /ws suffix for REST API calls
     this.baseUrl = baseUrl.replace(/^wss?:\/\//, 'https://').replace(/\/ws$/, '');
+    this.fetchFn = getFetch();
   }
 
   /**
@@ -35,7 +44,7 @@ export class WebsocketTokenManager {
    */
   async generateToken(config: HPKVTokenConfig): Promise<string> {
     try {
-      const response = await fetch(`${this.baseUrl}/token/websocket`, {
+      const response = await this.fetchFn(`${this.baseUrl}/token/websocket`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -60,7 +69,6 @@ export class WebsocketTokenManager {
         throw error;
       }
 
-      // Handle network errors or JSON parsing errors
       if (error instanceof TypeError) {
         throw new HPKVError('Failed to generate token: No response from server');
       }
